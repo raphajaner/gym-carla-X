@@ -251,7 +251,6 @@ class CarlaEnv(gym.Env):
 
     # Set ego information for render
     self.birdeye_render.set_hero(self.ego, self.ego.id)
-
     return self._get_obs()
   
   def step(self, action):
@@ -493,7 +492,7 @@ class CarlaEnv(gym.Env):
     point_cloud = []
     # Get point cloud data
     for location in self.lidar_data:
-      point_cloud.append([location.x, location.y, -location.z])
+      point_cloud.append([location.point.x, location.point.y, -location.point.z])
     point_cloud = np.array(point_cloud)
     # Separate the 3D space to bins for point cloud, x and y is set according to self.lidar_bin,
     # and z is set to be two bins.
