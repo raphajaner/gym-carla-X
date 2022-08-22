@@ -22,7 +22,7 @@ import carla
 from gym_carla.envs.render import BirdeyeRender
 from gym_carla.envs.route_planner import RoutePlanner
 from gym_carla.envs.misc import *
-
+from gym_carla.envs.vehicle_controller import lateral_control
 
 class CarlaEnv(gym.Env):
     """An OpenAI gym wrapper for CARLA simulator."""
@@ -105,6 +105,11 @@ class CarlaEnv(gym.Env):
         self.settings = self.world.get_settings()
         self.settings.synchronous_mode = True
         self.settings.fixed_delta_seconds = self.dt
+
+        self.settings.no_rendering_mode = True
+
+
+
         self.world.apply_settings(self.settings)
 
         # Set weather
@@ -274,6 +279,22 @@ class CarlaEnv(gym.Env):
 
     def step(self, action):
         # Calculate acceleration and steering
+
+        ego_trans = self.ego.get_transform()
+        ego_x = ego_trans.location.x
+        ego_y = ego_trans.location.y
+        ego_yaw = ego_trans.rotation.yaw / 180 * np.pi + np.pi
+        yaw = math.radians(ego_trans.rotation.yaw)
+        print("yaw_car ",yaw)
+        #import pdb; pdb.set_trace()
+        ego_velocity = self.ego.get_velocity()
+        ego_velocity = np.sqrt(ego_velocity.x ** 2 + ego_velocity.y ** 2)
+
+
+        action = np.array([action[0], lateral_control(np.array([ego_x, ego_y]), ego_velocity, ego_yaw, self.waypoints)])
+
+
+        #import pdb; pdb.set_trace()
         if self.discrete:
             acc = self.discrete_act[0][action // self.n_steer]
             steer = self.discrete_act[1][action % self.n_steer]

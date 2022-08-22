@@ -48,7 +48,7 @@ def main():
         obs = env.reset()
         print("lllloooop")
         while True:
-            action = [2.0, 0.0]
+            action = [2, 0.0]
             t = time.time()
             obs, r, done, info = env.step(action)
             print("step takes", time.time()-t)
