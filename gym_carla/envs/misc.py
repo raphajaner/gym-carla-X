@@ -211,6 +211,14 @@ def distance_vehicle(waypoint, vehicle_transform):
     return math.sqrt(dx * dx + dy * dy)
 
 
+def distance_vehicle_no_transform_wp(waypoint, vehicle_transform):
+    loc = vehicle_transform.location
+    dx = waypoint[0] - loc.x
+    dy = waypoint[1] - loc.y
+
+    return math.sqrt(dx * dx + dy * dy)
+
+
 def set_carla_transform(pose):
     """
   Get a carla transform object given pose.

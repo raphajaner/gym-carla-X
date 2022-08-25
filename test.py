@@ -15,9 +15,9 @@ import carla
 def main():
     # parameters for the gym_carla environment
     params = {
-        'number_of_vehicles': 30,
-        'number_of_walkers': 50,
-        'display_size': 256,  # screen size of bird-eye render
+        'number_of_vehicles': 0,
+        'number_of_walkers': 0,
+        'display_size': 196,  # screen size of bird-eye render
         'max_past_step': 1,  # the number of past steps to draw
         'dt': 0.1,  # time interval between two frames
         'discrete': False,  # whether to use discrete control space
@@ -30,7 +30,7 @@ def main():
         'town': 'Town02',  # which town to simulate
         'task_mode': 'random',  # mode of the task, [random, roundabout (only for Town03)]
         'max_time_episode': 1000,  # maximum timesteps per episode
-        'max_waypt': 12,  # maximum number of waypoints
+        'max_waypt': 15,  # maximum number of waypoints
         'obs_range': 32,  # observation range (meter)
         'lidar_bin': 0.125,  # bin size of lidar sensor (meter)
         'd_behind': 12,  # distance behind the ego vehicle (meter)
@@ -48,7 +48,7 @@ def main():
         obs = env.reset()
         print("lllloooop")
         while True:
-            action = [2, 0.0]
+            action = [1.3, 0.0]
             t = time.time()
             obs, r, done, info = env.step(action)
             print("step takes", time.time()-t)

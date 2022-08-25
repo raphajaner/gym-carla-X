@@ -20,9 +20,9 @@ from gym.utils import seeding
 import carla
 
 from gym_carla.envs.render import BirdeyeRender
-from gym_carla.envs.route_planner import RoutePlanner
+from gym_carla.envs.route_planner import RoutePlanner, RoadOption
 from gym_carla.envs.misc import *
-from gym_carla.envs.vehicle_controller import lateral_control
+from gym_carla.envs.vehicle_controller import VehicleController, LateralVehicleController
 
 class CarlaEnv(gym.Env):
     """An OpenAI gym wrapper for CARLA simulator."""
@@ -92,6 +92,7 @@ class CarlaEnv(gym.Env):
         client.set_timeout(10.0)
         self.world = client.load_world(params['town'])
         print('Carla server connected!')
+        self.client = client
 
         # Setup for traffic manager
         self.traffic_manager = client.get_trafficmanager(port=8000)
@@ -106,7 +107,7 @@ class CarlaEnv(gym.Env):
         self.settings.synchronous_mode = True
         self.settings.fixed_delta_seconds = self.dt
 
-        self.settings.no_rendering_mode = True
+        #self.settings.no_rendering_mode = True
 
 
 
@@ -262,6 +263,9 @@ class CarlaEnv(gym.Env):
             array = array[:, :, ::-1]
             self.camera_img = array
 
+        # Ego vehicle controller
+        self.ego_controller = LateralVehicleController(self.ego)
+
         # Update timesteps
         self.time_step = 0
         self.reset_step += 1
@@ -275,6 +279,15 @@ class CarlaEnv(gym.Env):
 
         # Set ego information for render
         self.birdeye_render.set_hero(self.ego, self.ego.id)
+
+        spectator = self.world.get_spectator()
+        # Get the location and rotation of the spectator through its transform
+        transform = spectator.get_transform()
+        location = transform.location
+        rotation = transform.rotation
+        # Set the spectator with an empty transform
+        spectator.set_transform(self.ego.get_transform())
+
         return self._get_obs()
 
     def step(self, action):
@@ -283,17 +296,31 @@ class CarlaEnv(gym.Env):
         ego_trans = self.ego.get_transform()
         ego_x = ego_trans.location.x
         ego_y = ego_trans.location.y
-        ego_yaw = ego_trans.rotation.yaw / 180 * np.pi + np.pi
-        yaw = math.radians(ego_trans.rotation.yaw)
-        print("yaw_car ",yaw)
-        #import pdb; pdb.set_trace()
+        # Transform is given in degree
+        #ego_yaw = ego_trans.rotation.yaw #/ 180 * np.pi + np.pi
+        ego_yaw = math.radians(ego_trans.rotation.yaw)
+
         ego_velocity = self.ego.get_velocity()
         ego_velocity = np.sqrt(ego_velocity.x ** 2 + ego_velocity.y ** 2)
 
+        a_steer = self.ego_controller.lateral_control(np.array([ego_x, ego_y]), ego_velocity, ego_yaw, self.waypoints)
 
-        action = np.array([action[0], lateral_control(np.array([ego_x, ego_y]), ego_velocity, ego_yaw, self.waypoints)])
+        print(self.ego_controller.calc_front_axle())
 
+        action = np.array([action[0], a_steer])
 
+        # Get Vehicle Physics Control
+        physics_control = self.ego.get_physics_control()
+
+        # For each Wheel Physics Control, print maximum steer anglewwsasdwa
+        for wheel in physics_control.wheels:
+            print(wheel.max_steer_angle)
+
+        #measurements, sensor_data = self.client.read_data()
+        #wimport pdb; pdb.set_trace()
+
+        if ego_velocity > 70/3.6:
+            action[0] = 0
         #import pdb; pdb.set_trace()
         if self.discrete:
             acc = self.discrete_act[0][action // self.n_steer]
@@ -313,7 +340,7 @@ class CarlaEnv(gym.Env):
         # Apply control
         act = carla.VehicleControl(throttle=float(throttle), steer=float(-steer), brake=float(brake))
         self.ego.apply_control(act)
-
+        #self.world.debug.draw_point(self.ego_controller.get_front_axle_position().location, size=0.5)
         self.world.tick()
 
         # Append actors polygon list
@@ -327,7 +354,7 @@ class CarlaEnv(gym.Env):
             self.walker_polygons.pop(0)
 
         # route planner
-        #self.waypoints, _, self.vehicle_front = self.routeplanner.run_step()
+        self.waypoints, _, self.vehicle_front = self.routeplanner.run_step()
 
         # state information
         #info = {
@@ -341,6 +368,7 @@ class CarlaEnv(gym.Env):
         self.total_step += 1
 
         return (self._get_obs(), self._get_reward(), self._terminal(), copy.deepcopy(info))
+        #return (None, self._get_reward(), self._terminal(), copy.deepcopy(info))
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
