@@ -35,7 +35,7 @@ class RoutePlanner():
         self._world = self._vehicle.get_world()
         self._map = self._world.get_map()
 
-        self._sampling_radius = 1
+        self._sampling_radius = 0.5
         # Minimum distance of wp to the vehicle after when they get removed from the queue
         self._min_distance = 4
 
