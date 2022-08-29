@@ -4,16 +4,19 @@
 #
 # This work is licensed under the terms of the MIT license.
 # For a copy, see <https://opensource.org/licenses/MIT>.
+import faulthandler; faulthandler.enable()
 
 import time
+import logging
+logging.basicConfig(format='%(asctime)s [%(levelname)s] \t %(message)s', level=logging.INFO, datefmt='%d-%b-%y %H:%M:%S')
 
 import gym
-
+import gym_carla
 def main():
     # parameters for the gym_carla environment
     params = {
-        'number_of_vehicles': 10,
-        'number_of_walkers': 10,
+        'number_of_vehicles': 0,
+        'number_of_walkers': 0,
         'display_size': 196,  # screen size of bird-eye render
         'max_past_step': 1,  # the number of past steps to draw
         'dt': 0.1,  # time interval between two frames
@@ -22,7 +25,7 @@ def main():
         'discrete_steer': [-0.2, 0.0, 0.2],  # discrete value of steering angles
         'continuous_accel_range': [-3.0, 3.0],  # continuous acceleration range
         'continuous_steer_range': [-0.3, 0.3],  # continuous steering angle range
-        'ego_vehicle_filter': 'vehicle.lincoln*',  # filter for defining ego vehicle
+        'ego_vehicle_filter': 'vehicle.mercedes.coupe_2020',  # filter for defining ego vehicle
         'port': 2000,  # connection port
         'town': 'Town02',  # which town to simulate
         'task_mode': 'random',  # mode of the task, [random, roundabout (only for Town03)]
@@ -39,10 +42,11 @@ def main():
         'pixor': False,  # whether to output PIXOR observation
     }
     # Set gym-carla environment
-    env = gym.make('carla-v0', params=params, new_step_api=True)
-
+    env = gym.make('carla-v1', params=params, new_step_api=True)
+    blueprint_library = env.world.get_blueprint_library()
+    [print(bp.id) for bp in blueprint_library.filter('vehicle.*.*')]
     try:
-        env.run()
+        env.run(reset_time=10)
     finally:
         env.close()
 

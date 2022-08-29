@@ -8,6 +8,8 @@
 from __future__ import division
 
 import copy
+import logging
+
 import numpy as np
 import pygame
 import random
@@ -86,8 +88,7 @@ class CarlaEnv(gym.Env):
             })
         self.observation_space = spaces.Dict(observation_space_dict)
 
-        # Initialize the renderer
-        self._init_renderer()
+
 
         # Record the time of total steps and resetting steps
         self.reset_step = 0
@@ -108,16 +109,31 @@ class CarlaEnv(gym.Env):
         return self.carla_manager.client
 
     def reset(self, seed=None, return_info=True, options=None):
+        logging.info("Env gym-carla will be reset.")
+        #pygame.quit()
+
+        self.carla_manager.clear_all_actors()
+
+        # Initialize the renderer
+
+        #import time
+        time.sleep(1)
+        self.carla_manager.client.reload_world(reset_settings=False)
+        self.carla_manager.world = self.carla_manager.client.get_world()
+        #Reload the current world, note that a        new
+        #world is created with default settings using the same map.All actors present in the
+        #world will be destroyed, but traffic manager instances will stay alive.
+
 
         # Disable sync mode
         self.carla_manager.set_asynchronous_mode()
-        #self.carla_manager.clear_all_actors()
         self.ego = self.carla_manager.spawn_ego()
-        self.ego_controller = LateralVehicleController(self.ego)
+        self.carla_manager.spawn_vehicle(5)
+        self.carla_manager.spawn_pedestrians(89)
+        # Enable sync mode
+        self.carla_manager.set_synchronous_mode(self.params)
 
-        self.carla_manager.spawn_vehicle(40)
-        self.carla_manager.spawn_pedestrians(52)
-
+        #self._init_renderer()
 
         # Get actors polygon list
         self.vehicle_polygons = []
@@ -131,14 +147,15 @@ class CarlaEnv(gym.Env):
         self.time_step = 0
         self.reset_step += 1
 
-        # Enable sync mode
-        self.carla_manager.set_synchronous_mode(self.params)
 
+
+        self.ego_controller = LateralVehicleController(self.ego)
         self.routeplanner = RoutePlanner(self.ego, self.max_waypt)
         self.waypoints, _, self.vehicle_front = self.routeplanner.run_step()
 
+
         # Set ego information for render
-        self.birdeye_render.set_hero(self.ego, self.ego.id)
+        #self.birdeye_render.set_hero(self.ego, self.ego.id)
 
         # Set spectator view to ego vehicle
         self.carla_manager.set_spectator_view(self.ego.get_transform())
@@ -152,6 +169,10 @@ class CarlaEnv(gym.Env):
         # Calculate acceleration and steering
 
         ego_trans = self.ego.get_transform()
+
+        self.carla_manager.set_spectator_view(ego_trans, z_offset=3)
+
+
         ego_x = ego_trans.location.x
         ego_y = ego_trans.location.y
         ego_yaw = math.radians(ego_trans.rotation.yaw)
@@ -220,6 +241,7 @@ class CarlaEnv(gym.Env):
         #return (self._get_obs(), self._get_reward(), self._terminal(), copy.deepcopy(info))
         #return (None, self._get_reward(), self._terminal(), copy.deepcopy(info))
         # New api obs, reward, termination, truncation, info.
+        #return (self._get_obs(), 1, False, False, copy.deepcopy(info))
         return ({'birdeye':None, 'camera':None, 'lidar':None, 'state':None}, 1, False, False, copy.deepcopy(info))
 
     def seed(self, seed=None):
@@ -229,47 +251,35 @@ class CarlaEnv(gym.Env):
     def render(self, mode):
         pass
 
-    def run(self, verbose=1):
+    def run(self, verbose=1, reset_time=20):
         obs, _ = self.reset(return_info=True)
+        start_time = time.time()
         while True:
+            t1 = time.time()
             action = [1.3, 0.0]
-            t = time.time()
             obs, r, terminated, truncated, info = self.step(action)
+            t2 = time.time()
+            if t2 - start_time > reset_time:
+                truncated = True
+                start_time = t2
             if verbose > 0:
-                print("Step takes ", time.time() - t)
+                logging.info(f"Step takes {t2 - t1}")
             if terminated:
+                obs, _ = self.reset()
+            if truncated:
                 obs, _ = self.reset()
 
     def close(self):
         self.carla_manager.clear_all_actors()
+        pygame.quit()
         settings = self.world.get_settings()
-        settings.synchronous_mode = False
-        settings.no_rendering_mode = False
-        settings.fixed_delta_seconds = None
-        self.world.apply_settings(settings)
+        #settings.synchronous_mode = False
+        #settings.no_rendering_mode = False
+        #settings.fixed_delta_seconds = None
+        #self.world.apply_settings(settings)
         print('Cleaned all actors successfully!')
         super().close()
 
-    def _create_vehicle_bluepprint(self, actor_filter, color=None, number_of_wheels=[4]):
-        """Create the blueprint for a specific actor type.
-
-    Args:
-      actor_filter: a string indicating the actor type, e.g, 'vehicle.lincoln*'.
-
-    Returns:
-      bp: the blueprint object of carla.
-    """
-        blueprints = self.world.get_blueprint_library().filter(actor_filter)
-        blueprint_library = []
-        for nw in number_of_wheels:
-            blueprint_library = blueprint_library + [x for x in blueprints if
-                                                     int(x.get_attribute('number_of_wheels')) == nw]
-        bp = random.choice(blueprint_library)
-        if bp.has_attribute('color'):
-            if not color:
-                color = random.choice(bp.get_attribute('color').recommended_values)
-            bp.set_attribute('color', color)
-        return bp
 
     def _init_renderer(self):
         """Initialize the birdeye view renderer.
@@ -429,14 +439,14 @@ class CarlaEnv(gym.Env):
         ## Lidar image generation
         point_cloud = []
         # Get point cloud data
-        for location in self.lidar_data:
+        for location in self.carla_manager.lidar_data:
             point_cloud.append([location.point.x, location.point.y, -location.point.z])
         point_cloud = np.array(point_cloud)
         # Separate the 3D space to bins for point cloud, x and y is set according to self.lidar_bin,
         # and z is set to be two bins.
         y_bins = np.arange(-(self.obs_range - self.d_behind), self.d_behind + self.lidar_bin, self.lidar_bin)
         x_bins = np.arange(-self.obs_range / 2, self.obs_range / 2 + self.lidar_bin, self.lidar_bin)
-        z_bins = [-self.lidar_height - 1, -self.lidar_height + 0.25, 1]
+        z_bins = [-self.carla_manager.lidar_height - 1, -self.carla_manager.lidar_height + 0.25, 1]
         # Get lidar image according to the bins
         lidar, _ = np.histogramdd(point_cloud, bins=(x_bins, y_bins, z_bins))
         lidar[:, :, 0] = np.array(lidar[:, :, 0] > 0, dtype=np.uint8)
@@ -460,10 +470,10 @@ class CarlaEnv(gym.Env):
         self.display.blit(lidar_surface, (self.display_size, 0))
 
         ## Display camera image
-        if self.camera_img.shape[0] != self.obs_size:
-            camera = resize(self.camera_img, (self.obs_size, self.obs_size)) * 255
+        if self.carla_manager.camera_img.shape[0] != self.obs_size:
+            camera = resize(self.carla_manager.camera_img, (self.obs_size, self.obs_size)) * 255
         else:
-            camera = self.camera_img.astype(np.float)
+            camera = self.carla_manager.camera_img.astype(np.float)
         camera_surface = rgb_to_display_surface(camera, self.display_size)
         self.display.blit(camera_surface, (self.display_size * 2, 0))
 

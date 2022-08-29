@@ -57,7 +57,7 @@ class VehicleController():
 class LateralVehicleController(VehicleController):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, *kwargs)
-        self.k_e = 3
+        self.k_e = 1
         self.k_v = 10
 
         self.yaw_previous = None
@@ -144,11 +144,13 @@ class LateralVehicleController(VehicleController):
         else:
             crosstrack_error = - abs(crosstrack_error)
 
+        if abs(crosstrack_error) < 0.1:
+            crosstrack_error=0
+
         yaw_diff_crosstrack = np.arctan(self.k_e * crosstrack_error / (self.k_v + velocity))
 
         print("yaw_diff_crosstrack ", yaw_diff_crosstrack)
-        if abs(yaw_diff_crosstrack) < 0.03:
-            yaw_diff_crosstrack=0
+
         # yaw_diff_crosstrack=0
         # print(crosstrack_error, yaw_diff, yaw_diff_crosstrack)
 
@@ -164,6 +166,8 @@ class LateralVehicleController(VehicleController):
         # 3. control low
         steer_expect = 1.3 * yaw_diff_norm + yaw_diff_crosstrack + yaw_rate_damping
 
+        if abs(steer_expect) < np.radians(1):
+            steer_expect=0
         # if steer_expect > np.pi:
         #    steer_expect -= 2 * np.pi
         # if steer_expect < - np.pi:
@@ -184,6 +188,7 @@ class LateralVehicleController(VehicleController):
         # steer = np.fmax(np.fmin(input_steer, 1.0), -1.0)
         steer = np.clip(input_steer, -1.0, 1.0)
         print("steer ", steer)
+        print("steer in degree", steer*70)
 
         self.yaw_previous = yaw
         self.wp_target_previous = wp_target
