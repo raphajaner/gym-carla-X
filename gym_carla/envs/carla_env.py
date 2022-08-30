@@ -118,18 +118,38 @@ class CarlaEnv(gym.Env):
 
         #import time
         time.sleep(1)
-        self.carla_manager.client.reload_world(reset_settings=False)
-        self.carla_manager.world = self.carla_manager.client.get_world()
+        #self.carla_manager.client.reload_world(reset_settings=False)
+        #self.carla_manager.world = self.carla_manager.client.get_world()
         #Reload the current world, note that a        new
         #world is created with default settings using the same map.All actors present in the
         #world will be destroyed, but traffic manager instances will stay alive.
-
+        if self.synchronous_mode:
+            self.world.tick()
+        else:
+            self.world.wait_for_tick()
 
         # Disable sync mode
+        logging.info(f'Set asy mode')
+
         self.carla_manager.set_asynchronous_mode()
+
+        logging.info(f'Set asy mode done')
+
         self.ego = self.carla_manager.spawn_ego()
+        logging.info(f'Spawning ego done')
+
         self.carla_manager.spawn_vehicle(5)
+        logging.info(f'Spawning vehicles done')
+
         self.carla_manager.spawn_pedestrians(89)
+
+        logging.info(f'Spawning pedestrians done')
+
+        if self.synchronous_mode:
+            self.world.tick()
+        else:
+            self.world.wait_for_tick()
+
         # Enable sync mode
         self.carla_manager.set_synchronous_mode(self.params)
 
