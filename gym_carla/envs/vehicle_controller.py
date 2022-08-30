@@ -87,7 +87,7 @@ class LateralVehicleController(VehicleController):
         # Change the steer output with the lateral controller.
         steer_output = 0
 
-        print("\n")
+        #print("\n")
 
         # Get waypoint that is nearest to front wheel
         wp_ind = np.argmin([distance_vehicle_no_transform_wp(wp, self.get_front_axle_position()) for wp in waypoints])

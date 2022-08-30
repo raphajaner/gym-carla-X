@@ -16,7 +16,7 @@ class CarlaManager():
     def __init__(self, params, verbose=1):
 
         # Connect to carla server and get world object
-        print('connecting to Carla server...')
+        print('Connecting to Carla server...')
         self.client = carla.Client('localhost', params['port'])
         self.client.set_timeout(10.0)
         self.world = self.client.load_world(params['town'])

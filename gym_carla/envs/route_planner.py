@@ -128,7 +128,7 @@ class RoutePlanner():
         max_index = -1
 
         for i in range(len(self._waypoint_buffer) - 1):
-            print(i)
+            #print(i)
             if self._min_distance < distance_vehicle(self._waypoint_buffer[i + 1][0], vehicle_transform) \
                     < distance_vehicle(self._waypoint_buffer[i][0], vehicle_transform):
                 self._waypoint_buffer.popleft()

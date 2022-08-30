@@ -123,33 +123,13 @@ class CarlaEnv(gym.Env):
         #Reload the current world, note that a        new
         #world is created with default settings using the same map.All actors present in the
         #world will be destroyed, but traffic manager instances will stay alive.
-        if self.synchronous_mode:
-            self.world.tick()
-        else:
-            self.world.wait_for_tick()
+
 
         # Disable sync mode
-        logging.info(f'Set asy mode')
-
         self.carla_manager.set_asynchronous_mode()
-
-        logging.info(f'Set asy mode done')
-
         self.ego = self.carla_manager.spawn_ego()
-        logging.info(f'Spawning ego done')
-
         self.carla_manager.spawn_vehicle(5)
-        logging.info(f'Spawning vehicles done')
-
         self.carla_manager.spawn_pedestrians(89)
-
-        logging.info(f'Spawning pedestrians done')
-
-        if self.synchronous_mode:
-            self.world.tick()
-        else:
-            self.world.wait_for_tick()
-
         # Enable sync mode
         self.carla_manager.set_synchronous_mode(self.params)
 
@@ -206,8 +186,8 @@ class CarlaEnv(gym.Env):
 
         # For each Wheel Physics Control, print maximum steer anglewwsasdwa
         physics_control = self.ego.get_physics_control()
-        for wheel in physics_control.wheels:
-            print(wheel.max_steer_angle)
+        #for wheel in physics_control.wheels:
+        #    print(wheel.max_steer_angle)
 
         # measurements, sensor_data = self.client.read_data()
 
@@ -271,7 +251,7 @@ class CarlaEnv(gym.Env):
     def render(self, mode):
         pass
 
-    def run(self, verbose=1, reset_time=20):
+    def run(self, verbose=0, reset_time=20):
         obs, _ = self.reset(return_info=True)
         start_time = time.time()
         while True:
