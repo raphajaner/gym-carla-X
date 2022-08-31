@@ -14,6 +14,8 @@ import numpy as np
 import pygame
 import random
 import time
+from datetime import timedelta
+
 from skimage.transform import resize
 
 import gym
@@ -88,8 +90,9 @@ class CarlaEnv(gym.Env):
             })
         self.observation_space = spaces.Dict(observation_space_dict)
 
+        self.carla_manager.set_synchronous_mode(self.params)
 
-
+        #print(self.carla_manager.settings.synchronous_mode)
         # Record the time of total steps and resetting steps
         self.reset_step = 0
         self.total_step = 0
@@ -127,10 +130,9 @@ class CarlaEnv(gym.Env):
 
         # Disable sync mode
         self.carla_manager.set_asynchronous_mode()
-        self.ego = self.carla_manager.spawn_ego()
-        self.carla_manager.spawn_vehicle(5)
+        self.carla_manager.spawn_vehicle(50)
         self.carla_manager.spawn_pedestrians(89)
-        # Enable sync mode
+        self.ego = self.carla_manager.spawn_ego()
         self.carla_manager.set_synchronous_mode(self.params)
 
         #self._init_renderer()
@@ -165,6 +167,9 @@ class CarlaEnv(gym.Env):
 
     def step(self, action):
 
+        snapshot = self.carla_manager.world.get_snapshot()
+
+        logging.info(f'!!!! Snapshot in step has frame {snapshot.frame}')
 
         # Calculate acceleration and steering
 
@@ -212,7 +217,7 @@ class CarlaEnv(gym.Env):
         act = carla.VehicleControl(throttle=float(throttle), steer=float(-steer), brake=float(brake))
         self.ego.apply_control(act)
         # self.world.debug.draw_point(self.ego_controller.get_front_axle_position().location, size=0.5)
-        self.world.tick()
+        data = self.carla_manager.tick()
 
         # Append actors polygon list
         vehicle_poly_dict = self._get_actor_polygons('vehicle.*')
@@ -255,19 +260,21 @@ class CarlaEnv(gym.Env):
         obs, _ = self.reset(return_info=True)
         start_time = time.time()
         while True:
-            t1 = time.time()
             action = [1.3, 0.0]
             obs, r, terminated, truncated, info = self.step(action)
             t2 = time.time()
-            if t2 - start_time > reset_time:
+            duration = t2 - start_time
+            if duration > reset_time:
                 truncated = True
                 start_time = t2
             if verbose > 0:
-                logging.info(f"Step takes {t2 - t1}")
+                logging.info(f"Loop run for {str(timedelta(seconds=duration))}")
             if terminated:
                 obs, _ = self.reset()
+                logging.info(f"Loop run for {str(timedelta(seconds=duration))}")
             if truncated:
                 obs, _ = self.reset()
+                logging.info(f"Loop run for {str(timedelta(seconds=duration))}")
 
     def close(self):
         self.carla_manager.clear_all_actors()
@@ -277,7 +284,7 @@ class CarlaEnv(gym.Env):
         #settings.no_rendering_mode = False
         #settings.fixed_delta_seconds = None
         #self.world.apply_settings(settings)
-        print('Cleaned all actors successfully!')
+        logging.info('Cleaned all actors successfully!')
         super().close()
 
 

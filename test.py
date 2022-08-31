@@ -9,7 +9,7 @@ import faulthandler; faulthandler.enable()
 import time
 import logging
 logging.basicConfig(format='%(asctime)s [%(levelname)s] \t %(message)s', level=logging.INFO, datefmt='%d-%b-%y %H:%M:%S')
-
+from datetime import timedelta
 import gym
 import gym_carla
 def main():
@@ -19,7 +19,7 @@ def main():
         'number_of_walkers': 0,
         'display_size': 196,  # screen size of bird-eye render
         'max_past_step': 1,  # the number of past steps to draw
-        'dt': 0.1,  # time interval between two frames
+        'dt': 0.05,  # time interval between two frames
         'discrete': False,  # whether to use discrete control space
         'discrete_acc': [-3.0, 0.0, 3.0],  # discrete value of accelerations
         'discrete_steer': [-0.2, 0.0, 0.2],  # discrete value of steering angles
@@ -42,14 +42,15 @@ def main():
         'pixor': False,  # whether to output PIXOR observation
     }
     # Set gym-carla environment
+    start_time = time.time()
     env = gym.make('carla-v1', params=params, new_step_api=True)
     blueprint_library = env.world.get_blueprint_library()
     [print(bp.id) for bp in blueprint_library.filter('vehicle.*.*')]
     try:
-        env.run(reset_time=10)
+        env.run(reset_time=30)
     finally:
+        logging.info(f'Env run for {str(timedelta(seconds=time.time()-start_time))}s.')
         env.close()
-
 
 if __name__ == '__main__':
     main()

@@ -3,6 +3,7 @@ import time
 import carla
 import numpy as np
 import logging
+from queue import Queue
 
 from sympy import im
 
@@ -46,10 +47,35 @@ class CarlaManager():
         self.sensors_list = []
         self.all_id = []
 
+        # We create the sensor queue in which we keep track of the information
+        # already received. This structure is thread safe and can be
+        # accessed by all the sensors callback concurrently without problem.
+        self._sensor_queues = {}
+
         self.vehicle_spawn_points = list(self.world.get_map().get_spawn_points())
 
         self.world.set_weather(carla.WeatherParameters.ClearNoon)
         self.world.set_pedestrians_cross_factor(1)
+
+    def tick(self, timeout=10):
+        self.w_frame = self.world.tick()
+        print("seff w frame ", self.w_frame)
+        if self.sensors_list:
+            sensors_data = {key: self._retrieve_data(queue, timeout, key) for key, queue in self._sensor_queues.items()}
+        #assert all(frame == self.w_frame for frame, x in sensors_data.items())
+        return sensors_data
+
+    def _retrieve_data(self, sensor_queue, timeout, key):
+        if key=="collision" and sensor_queue.empty():
+            logging.info(f"Queue {key} was empty.")
+            return None
+        while True:
+            frame, data = sensor_queue.get(timeout=2)
+            if frame == self.w_frame:
+                logging.info(f"Queue {key}: {frame} == {self.w_frame}")
+                return data
+            else:
+                logging.warning(f"Queue {key}: {frame} != {self.w_frame}")
 
     def spawn_ego(self):
 
@@ -68,50 +94,64 @@ class CarlaManager():
         #     if ego_spawn_times > self.max_ego_spawn_times:
         #        self.reset()
 
-        transform = np.random.choice(self.vehicle_spawn_points)
-        self.ego = self.world.try_spawn_actor(self.ego_bp, transform)
+        self.ego = None
+        while self.ego is None:
+            transform = np.random.choice(self.vehicle_spawn_points)
+            self.ego = self.world.try_spawn_actor(self.ego_bp, transform)
+
         if self.ego is not None:
             logging.info(f"Ego vehicles spawned.")
         else:
             logging.error(f"Ego vehicles could not be spawned.")
 
-        # TODO Make while loop to make sure that there is no vehicle so far!!
-
         # Add collision sensor
-        self.collision_sensor = self.world.spawn_actor(self.collision_bp, carla.Transform(), attach_to=self.ego)
+        collision_queue = Queue()
+        self._sensor_queues.update({'collision': collision_queue})
+        collision_sensor = self.world.spawn_actor(self.collision_bp, carla.Transform(), attach_to=self.ego)
+        collision_sensor.listen(lambda event: get_collision_hist(event, collision_queue))
+        self.sensors_list.append(collision_sensor)
 
-        # self.collision_sensor.listen(lambda event: get_collision_hist(event))
+        def get_collision_hist(data, queue):
 
+            logging.info(f"collision added {data.frame}")
+            if not queue.empty():
+                old_data = queue.get()
+                if old_data[0] != data.frame:
+                    queue.put(old_data)
 
-
-        def get_collision_hist(event):
-            impulse = event.normal_impulse
+            impulse = data.normal_impulse
             intensity = np.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
-            self.collision_hist.append(intensity)
-            if len(self.collision_hist) > self.collision_hist_l:
-                self.collision_hist.pop(0)
+            #self.collision_hist.append(intensity)
+            #if len(self.collision_hist) > self.collision_hist_l:
+            #    self.collision_hist.pop(0)
+            queue.put((data.frame, intensity))
 
-        self.collision_hist = []
+        #self.collision_hist = []
 
         # Add lidar sensor
-        self.lidar_sensor = self.world.spawn_actor(self.lidar_bp, self.lidar_trans, attach_to=self.ego)
+        lidar_queue = Queue()
+        self._sensor_queues.update({'lidar': lidar_queue})
+        lidar_sensor = self.world.spawn_actor(self.lidar_bp, self.lidar_trans, attach_to=self.ego)
+        lidar_sensor.listen(lambda data: get_lidar_data(data, lidar_queue))
+        self.sensors_list.append(lidar_sensor)
 
-        # self.lidar_sensor.listen(lambda data: get_lidar_data(data))
-
-        def get_lidar_data(data):
-            self.lidar_data = data
+        def get_lidar_data(data, queue):
+            logging.info(f"lidar added {data.frame}")
+            queue.put((data.frame, data))
 
         # Add camera sensor
-        self.camera_sensor = self.world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego)
+        camera_queue = Queue()
+        self._sensor_queues.update({'camera': camera_queue})
+        camera_sensor = self.world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego)
+        camera_sensor.listen(lambda data: get_camera_img(data, camera_queue))
+        self.sensors_list.append(camera_sensor)
 
-        # self.camera_sensor.listen(lambda data: get_camera_img(data))
-
-        def get_camera_img(data):
+        def get_camera_img(data, queue):
             array = np.frombuffer(data.raw_data, dtype=np.dtype("uint8"))
             array = np.reshape(array, (data.height, data.width, 4))
             array = array[:, :, :3]
             array = array[:, :, ::-1]
-            self.camera_img = array
+            queue.put((data.frame, array))
 
         return self.ego
 
@@ -150,7 +190,7 @@ class CarlaManager():
 
         # Set automatic vehicle lights update if specified
         car_lights_on = False
-        #if car_lights_on:
+        # if car_lights_on:
         #    all_vehicle_actors = self.world.get_actors(self.vehicles_list)
         #    for actor in all_vehicle_actors:
         #        self.traffic_manager.update_vehicle_lights(actor, True)
@@ -181,10 +221,10 @@ class CarlaManager():
 
         for result in response:
             if result.error:
-                logging.error(f"Spawning walkers lead to error: {result.error}")
-
+                # logging.error(f"Spawning walkers lead to error: {result.error}")
+                pass
             else:
-                #walkers_list.append({"id": result.actor_id})
+                # walkers_list.append({"id": result.actor_id})
                 walkers_list.append(result.actor_id)
         return walkers_list
 
@@ -193,7 +233,7 @@ class CarlaManager():
         #    world.set_pedestrians_seed(args.seedw)
         #    random.seed(args.seedw)
         walkers_list = []
-        #while len(self.walkers_list) < n_walker:
+        # while len(self.walkers_list) < n_walker:
         #    try:
         walkers_list += self._spawn_batch_pedestrians(n_walker=n_walker - len(walkers_list))
         #    except:
@@ -206,6 +246,7 @@ class CarlaManager():
         walker_controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
 
         batch = [SpawnActor(walker_controller_bp, carla.Transform(), walker_id) for walker_id in walkers_list]
+
         results = self.client.apply_batch_sync(batch, self.synchronous_mode)
 
         controller_list = []
@@ -213,10 +254,10 @@ class CarlaManager():
             if results[i].error:
                 logging.error(f"Error when spawning the controllers: {results[i].error}")
             else:
-                #self.walkers_list[i]["con"] = results[i].actor_id
+                # self.walkers_list[i]["con"] = results[i].actor_id
                 controller_list.append(results[i].actor_id)
         # 4. we put together the walkers and controllers id to get the objects from their id
-        #for i in range(len(self.walkers_list)):
+        # for i in range(len(self.walkers_list)):
         #    self.all_id.append(self.walkers_list[i]["con"])
         #    self.all_id.append(self.walkers_list[i]["id"])
         self.controller_list = controller_list
@@ -258,7 +299,6 @@ class CarlaManager():
         else:
             logging.error(f"There were no vehicles to be destroyed.")
 
-
         if self.synchronous_mode:
             self.world.tick()
         else:
@@ -266,14 +306,10 @@ class CarlaManager():
 
         if self.ego is not None:
             if self.ego.is_alive:
-                self.collision_sensor.stop()
-                self.collision_sensor.destroy()
+                for sensor in self.sensors_list:
+                    sensor.stop()
+                    sensor.destroy()
 
-                self.camera_sensor.stop()
-                self.camera_sensor.destroy()
-
-                self.lidar_sensor.stop()
-                self.lidar_sensor.destroy()
 
                 if self.ego.destroy():
                     logging.info(f'Destroyed the ego vehicle.')
@@ -286,7 +322,7 @@ class CarlaManager():
             self.world.wait_for_tick()
 
         # Stop walker controllers (list is [controller, actor, controller, actor ...])
-        #if self.walkers_list:
+        # if self.walkers_list:
         #    for i in range(0, len(self.all_id), 2):
         #        self.all_actors[i].stop()
 
@@ -297,7 +333,6 @@ class CarlaManager():
             self.world.tick()
         else:
             self.world.wait_for_tick()
-
 
         response = self.client.apply_batch_sync([DestroyActor(x) for x in self.controller_list])
 
@@ -337,15 +372,16 @@ class CarlaManager():
         self.controller_list = []
         self.sensors_list = []
         self.all_id = []
-
+        self._sensor_queues = {}
 
         if self.synchronous_mode:
             self.world.tick()
         else:
             self.world.wait_for_tick()
 
-        logging.info(f"Actors have been destroyed.")
         time.sleep(1)
+
+        logging.info(f"Actors have been destroyed.")
 
     def _init_traffic_manager(self, params, ):
         # Setup for traffic manager
