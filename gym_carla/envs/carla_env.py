@@ -36,7 +36,7 @@ class CarlaEnv(gym.Env):
     def __init__(self, params):
         self.time_start = time.time()
         self.carla_manager = CarlaManager(params)
-
+        self.carla_manager.setup_experiment()
         # parameters
         self.params = params
         self.display_size = params['display_size']  # rendering screen size
@@ -160,7 +160,7 @@ class CarlaEnv(gym.Env):
         #self.birdeye_render.set_hero(self.ego, self.ego.id)
 
         # Set spectator view to ego vehicle
-        self.carla_manager.set_spectator_view(self.ego.get_transform())
+        #self.carla_manager.set_spectator_camera_view(self.ego.get_transform())
         return_info = {}
         #return ({'birdeye':None, 'camera':None, 'lidar':None, 'state':None}, return_info) #self._get_obs()
         return ({'birdeye':None, 'camera':None, 'lidar':None, 'state':None}, return_info) #self._get_obs()
@@ -175,7 +175,7 @@ class CarlaEnv(gym.Env):
 
         ego_trans = self.ego.get_transform()
 
-        self.carla_manager.set_spectator_view(ego_trans, z_offset=3)
+        #self.carla_manager.set_spectator_view(ego_trans, z_offset=3)
 
 
         ego_x = ego_trans.location.x

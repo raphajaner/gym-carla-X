@@ -40,6 +40,13 @@ def main():
         'display_route': True,  # whether to render the desired route
         'pixor_size': 64,  # size of the pixor labels
         'pixor': False,  # whether to output PIXOR observation
+        'retries_on_error': 10,
+        'timeout': 2,
+        'host': '127.0.0.1',
+        'weather': 'ClearNoon',
+        'pedestrian_cross_factor': 1,
+        'ego_spawn_times': 10,
+        'sensors': ['RGBCamera', 'Lidar', 'CollisionSensor']
     }
     # Set gym-carla environment
     start_time = time.time()
@@ -53,4 +60,8 @@ def main():
         env.close()
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+
+    finally:
+        logging.info("\nStopped running! Ciao, see you soon!")

@@ -1,11 +1,14 @@
+import copy
 import time
 
 import carla
 import numpy as np
 import logging
 from queue import Queue
-
+from numpy import random
 from sympy import im
+from gym_carla.envs.sensors import *
+import psutil, os, signal, subprocess
 
 SpawnActor = carla.command.SpawnActor
 SetAutopilot = carla.command.SetAutopilot
@@ -13,146 +16,213 @@ FutureActor = carla.command.FutureActor
 DestroyActor = carla.command.DestroyActor
 
 
-class CarlaManager():
+def is_used(port):
+    """Checks whether or not a port is used"""
+    return port in [conn.laddr.port for conn in psutil.net_connections()]
+
+
+def kill_all_servers():
+    """Kill all PIDs that start with Carla"""
+    processes = [p for p in psutil.process_iter() if "carla" in p.name().lower()]
+    for process in processes:
+        os.kill(process.pid, signal.SIGKILL)
+
+
+class CarlaManager:
     def __init__(self, params, verbose=1):
+        """ Manages the connection between a Carla server and corresponding client."""
+        self.params = copy.deepcopy(params)
 
-        # Connect to carla server and get world object
-        print('Connecting to Carla server...')
-        self.client = carla.Client('localhost', params['port'])
-        self.client.set_timeout(10.0)
-        self.world = self.client.load_world(params['town'])
-        if verbose > 0:
-            print('Carla server connected!')
+        self.client = None
+        self.world = None
+        self.map = None
 
-        self.params = params
-        self.dt = params['dt']
-        self.task_mode = params['task_mode']
+        self.traffic_manager = None
+        self.spectator = None
+        self.vehicle_spawn_points = None
+        self.sensor_manager = SensorManager()
 
-        self.obs_range = params['obs_range']
-        self.lidar_bin = params['lidar_bin']
-        self.obs_size = int(self.obs_range / self.lidar_bin)
-        self.max_ego_spawn_times = params['max_ego_spawn_times']
-
-        self.dt = None
-        self.settings = self.world.get_settings()
-        self.spectator = self.world.get_spectator()
+        self.settings = None
+        self.server_port = 2000 # TODO
+        self.tm_port = None
         self.synchronous_mode = None
-        self._init_traffic_manager(params)
+        self.dt = None
 
-        self.all_actors_list = []
         self.ego = None
+        self.ego_bp = None
+
+        # Keeping track of all actors, sensors, etc. in the simulation
         self.vehicles_list = []
         self.walkers_list = []
         self.controller_list = []
         self.sensors_list = []
-        self.all_id = []
+
+        self.current_w_frame = None
+
+        # self.init_server(self) TODO
+        self.connect_client()
 
         # We create the sensor queue in which we keep track of the information
         # already received. This structure is thread safe and can be
         # accessed by all the sensors callback concurrently without problem.
-        self._sensor_queues = {}
 
+        # Sensor stuff
+        self.obs_range = params['obs_range']
+        self.lidar_bin = params['lidar_bin']
+        self.params["obs_size"] = int(self.obs_range / self.lidar_bin)
+        self.max_ego_spawn_times = params['max_ego_spawn_times']
+
+        # self.dt = None
+        # self.settings = self.world.get_settings()
+        # self.spectator = self.world.get_spectator()
+
+    def init_server(self):
+        # Taken from https://github.com/carla-simulator/rllib-integration
+        """Start a server on a random port"""
+        self.server_port = random.randint(15000, 32000)
+
+        # Ray tends to start all processes simultaneously. Use random delays to avoid problems
+        time.sleep(random.uniform(0, 1))
+
+        uses_server_port = is_used(self.server_port)
+        uses_stream_port = is_used(self.server_port + 1)
+        while uses_server_port and uses_stream_port:
+            if uses_server_port:
+                print("Is using the server port: " + self.server_port)
+            if uses_stream_port:
+                print("Is using the streaming port: " + str(self.server_port + 1))
+            self.server_port += 2
+            uses_server_port = is_used(self.server_port)
+            uses_stream_port = is_used(self.server_port + 1)
+
+        if self.params["show_display"]:
+            server_command = [
+                "{}/CarlaUE4.sh".format(os.environ["CARLA_ROOT"]),
+                "-windowed",
+                "-ResX={}".format(self.params["resolution_x"]),
+                "-ResY={}".format(self.params["resolution_y"]),
+            ]
+        else:
+            server_command = [
+                "DISPLAY= ",
+                "{}/CarlaUE4.sh".format(os.environ["CARLA_ROOT"]),
+                "-opengl"  # no-display isn't supported for Unreal 4.24 with vulkan
+            ]
+
+        server_command += [
+            "--carla-rpc-port={}".format(self.server_port),
+            "-quality-level={}".format(self.params["quality_level"])
+        ]
+
+        server_command_text = " ".join(map(str, server_command))
+        print(server_command_text)
+        server_process = subprocess.Popen(
+            server_command_text,
+            shell=True,
+            preexec_fn=os.setsid,
+            stdout=open(os.devnull, "w"),
+        )
+
+    def connect_client(self):
+        # Taken from https://github.com/carla-simulator/rllib-integration
+        logging.info('Connecting to Carla server...')
+        for i in range(self.params["retries_on_error"]):
+            try:
+                self.client = carla.Client(self.params["host"], self.server_port)
+                self.client.set_timeout(self.params["timeout"])
+                self.world = self.client.load_world(self.params['town'])
+
+                # settings = self.world.get_settings()
+                # settings.no_rendering_mode = not self.params["enable_rendering"]
+                # settings.synchronous_mode = True
+                # settings.fixed_delta_seconds = self.params["timestep"]
+                # self.world.apply_settings(settings)
+                # self.world.tick()
+                logging.info('Carla server connected!')
+                return
+
+            except Exception as e:
+                print(" Waiting for server to be ready: {}, attempt {} of {}".format(e, i + 1,
+                                                                                     self.params["retries_on_error"]))
+                time.sleep(3)
+
+        raise Exception(
+            "Cannot connect to server. Try increasing 'timeout' or 'retries_on_error' at the carla configuration")
+
+    def setup_experiment(self):
+        self.world = self.client.get_world()
+        self.settings = self.world.get_settings()
+        self.spectator = self.world.get_spectator()
+        self._init_traffic_manager()
         self.vehicle_spawn_points = list(self.world.get_map().get_spawn_points())
 
-        self.world.set_weather(carla.WeatherParameters.ClearNoon)
-        self.world.set_pedestrians_cross_factor(1)
+        if self.params['weather'] == 'ClearNoon':
+            self.world.set_weather(carla.WeatherParameters.ClearNoon)
+        self.world.set_pedestrians_cross_factor(self.params['pedestrian_cross_factor'])
+
+    def _init_traffic_manager(self):
+        # self.tm_port = self.server_port // 10 + self.server_port % 10
+        # while is_used(self.tm_port):
+        #    print("Traffic manager's port " + str(self.tm_port) + " is already being used. Checking the next one")
+        #    tm_port += 1
+        # print("Traffic manager connected to port " + str(self.tm_port))
+
+        # Setup for traffic manager
+        self.traffic_manager = self.client.get_trafficmanager()
+        self.traffic_manager.set_global_distance_to_leading_vehicle(2.5)
+        self.traffic_manager.set_synchronous_mode(True)
+        self.traffic_manager.set_hybrid_physics_mode(True)
+        self.traffic_manager.set_hybrid_physics_radius(70.0)
+        logging.info('Traffic manager has been created.')
 
     def tick(self, timeout=10):
-        self.w_frame = self.world.tick()
-        print("seff w frame ", self.w_frame)
-        if self.sensors_list:
-            sensors_data = {key: self._retrieve_data(queue, timeout, key) for key, queue in self._sensor_queues.items()}
-        #assert all(frame == self.w_frame for frame, x in sensors_data.items())
-        return sensors_data
+        # Send tick to server to move one tick forward, returns the frame number of the snapshot the world will be in
+        # after the tick
+        self.current_w_frame = self.world.tick()
+        logging.debug(f'World frame after tick: {self.current_w_frame}')
 
-    def _retrieve_data(self, sensor_queue, timeout, key):
-        if key=="collision" and sensor_queue.empty():
-            logging.info(f"Queue {key} was empty.")
-            return None
-        while True:
-            frame, data = sensor_queue.get(timeout=2)
-            if frame == self.w_frame:
-                logging.info(f"Queue {key}: {frame} == {self.w_frame}")
-                return data
-            else:
-                logging.warning(f"Queue {key}: {frame} != {self.w_frame}")
+        # Move spectator to follow the ego car
+        self.set_spectator_camera_view(self.ego.get_transform(), z_offset=5)
+        sensors_data = self.sensor_manager.get_data(self.current_w_frame)
+        assert all(frame == self.current_w_frame for frame, _ in sensors_data.items())
+        return
 
     def spawn_ego(self):
-
         self._create_ego_bp()
-        self._create_collision_sensor_bp()
-        self._create_lidar_bp()
-        self._create_camera_bp()
 
         self.max_ego_spawn_times = 10
-        self.task_mode = 'random'
-        # Spawn the ego vehicle
         ego_spawn_times = 0
-        vehicle = None
-
-        # while True:
-        #     if ego_spawn_times > self.max_ego_spawn_times:
-        #        self.reset()
-
-        self.ego = None
-        while self.ego is None:
-            transform = np.random.choice(self.vehicle_spawn_points)
-            self.ego = self.world.try_spawn_actor(self.ego_bp, transform)
 
         if self.ego is not None:
-            logging.info(f"Ego vehicles spawned.")
-        else:
-            logging.error(f"Ego vehicles could not be spawned.")
+            logging.error("Ego vehicle already exists. Please make sure that the ego is correctly deleted"
+                          " before spawning")
+            self.ego.destroy()
+            self.ego = None
 
-        # Add collision sensor
-        collision_queue = Queue()
-        self._sensor_queues.update({'collision': collision_queue})
-        collision_sensor = self.world.spawn_actor(self.collision_bp, carla.Transform(), attach_to=self.ego)
-        collision_sensor.listen(lambda event: get_collision_hist(event, collision_queue))
-        self.sensors_list.append(collision_sensor)
+        random.shuffle(self.vehicle_spawn_points)
+        for i in range(0,len(self.vehicle_spawn_points)):
+            next_spawn_point = self.vehicle_spawn_points[i % len(self.vehicle_spawn_points)]
+            self.ego = self.world.try_spawn_actor(self.ego_bp, next_spawn_point)
+            if self.ego is not None:
+                logging.info("Ego spawned!")
+                break
+            else:
+                logging.warning("Could not spawn hero, changing spawn point")
 
-        def get_collision_hist(data, queue):
+        if self.ego is None:
+            print("We ran out of spawn points")
+            # TODO: call self.reset()
+            return
 
-            logging.info(f"collision added {data.frame}")
-            if not queue.empty():
-                old_data = queue.get()
-                if old_data[0] != data.frame:
-                    queue.put(old_data)
+        # Spawn sensors to be added to ego vehicle
+        #for name, attributes in self.params["sensors"].items():
+        camera = RGBCamera('camera', self.params, self.sensor_manager, self.ego)
+        lidar = Lidar('camera', self.params, self.sensor_manager, self.ego)
+        collision_sensor = CollisionSensor('camera', self.params, self.sensor_manager, self.ego)
 
-            impulse = data.normal_impulse
-            intensity = np.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
-            #self.collision_hist.append(intensity)
-            #if len(self.collision_hist) > self.collision_hist_l:
-            #    self.collision_hist.pop(0)
-            queue.put((data.frame, intensity))
-
-        #self.collision_hist = []
-
-        # Add lidar sensor
-        lidar_queue = Queue()
-        self._sensor_queues.update({'lidar': lidar_queue})
-        lidar_sensor = self.world.spawn_actor(self.lidar_bp, self.lidar_trans, attach_to=self.ego)
-        lidar_sensor.listen(lambda data: get_lidar_data(data, lidar_queue))
-        self.sensors_list.append(lidar_sensor)
-
-        def get_lidar_data(data, queue):
-            logging.info(f"lidar added {data.frame}")
-            queue.put((data.frame, data))
-
-        # Add camera sensor
-        camera_queue = Queue()
-        self._sensor_queues.update({'camera': camera_queue})
-        camera_sensor = self.world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego)
-        camera_sensor.listen(lambda data: get_camera_img(data, camera_queue))
-        self.sensors_list.append(camera_sensor)
-
-        def get_camera_img(data, queue):
-            array = np.frombuffer(data.raw_data, dtype=np.dtype("uint8"))
-            array = np.reshape(array, (data.height, data.width, 4))
-            array = array[:, :, :3]
-            array = array[:, :, ::-1]
-            queue.put((data.frame, array))
-
+        self.sensor_manager.register(camera)
+        self.sensor_manager.register(lidar)
+        self.sensor_manager.register(collision_sensor)
         return self.ego
 
     def spawn_vehicle(self, n_vehicles):
@@ -306,10 +376,7 @@ class CarlaManager():
 
         if self.ego is not None:
             if self.ego.is_alive:
-                for sensor in self.sensors_list:
-                    sensor.stop()
-                    sensor.destroy()
-
+                self.sensor_manager.close()
 
                 if self.ego.destroy():
                     logging.info(f'Destroyed the ego vehicle.')
@@ -383,19 +450,9 @@ class CarlaManager():
 
         logging.info(f"Actors have been destroyed.")
 
-    def _init_traffic_manager(self, params, ):
-        # Setup for traffic manager
-        traffic_manager = self.client.get_trafficmanager()
-        traffic_manager.set_global_distance_to_leading_vehicle(2.5)
-        traffic_manager.set_synchronous_mode(True)
-        traffic_manager.set_hybrid_physics_mode(True)
-        traffic_manager.set_hybrid_physics_radius(70.0)
-        logging.info('Traffic manager created.')
-
-        return traffic_manager
         # self.traffic_manager.global_percentage_speed_difference(30.0)
 
-    def set_spectator_view(self, view=carla.Transform(), z_offset=0):
+    def set_spectator_camera_view(self, view=carla.Transform(), z_offset=0):
         # Get the location and rotation of the spectator through its transform
         # transform = self.spectator.get_transform()
         view.location.z += z_offset
@@ -458,28 +515,6 @@ class CarlaManager():
         # walker_controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
         return walker_bp  # , walker_controller_bp
 
-    def _create_collision_sensor_bp(self):
-        self.collision_hist = []  # The collision history
-        self.collision_hist_l = 1  # collision history length
-        self.collision_bp = self.world.get_blueprint_library().find('sensor.other.collision')
 
-        # Lidar sensor
 
-    def _create_lidar_bp(self):
-        self.lidar_data = None
-        self.lidar_height = 2.1
-        self.lidar_trans = carla.Transform(carla.Location(x=0.0, z=self.lidar_height))
-        self.lidar_bp = self.world.get_blueprint_library().find('sensor.lidar.ray_cast')
-        self.lidar_bp.set_attribute('channels', '32')
-        self.lidar_bp.set_attribute('range', '5000')
 
-    def _create_camera_bp(self):
-        self.camera_img = np.zeros((self.obs_size, self.obs_size, 3), dtype=np.uint8)
-        self.camera_trans = carla.Transform(carla.Location(x=0.8, z=1.7))
-        self.camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
-        # Modify the attributes of the blueprint to set image resolution and field of view.
-        self.camera_bp.set_attribute('image_size_x', str(self.obs_size))
-        self.camera_bp.set_attribute('image_size_y', str(self.obs_size))
-        self.camera_bp.set_attribute('fov', '110')
-        # Set the time in seconds between sensor captures
-        self.camera_bp.set_attribute('sensor_tick', '0.02')
