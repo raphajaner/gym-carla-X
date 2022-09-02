@@ -29,6 +29,12 @@ class VehicleController():
 
         return offset_length
 
+    #def calc_steering_angle(self):
+    # For each Wheel Physics Control, print maximum steer anglewwsasdwa
+    # physics_control = self.ego.get_physics_control()
+    #    for wheel in physics_control.wheels:
+    #    #    print(wheel.max_steer_angle)
+
     @staticmethod
     def normalize_angle(angle):
         """
@@ -57,7 +63,7 @@ class VehicleController():
 class LateralVehicleController(VehicleController):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, *kwargs)
-        self.k_e = 3
+        self.k_e = 1
         self.k_v = 10
 
         self.yaw_previous = None
@@ -87,7 +93,7 @@ class LateralVehicleController(VehicleController):
         # Change the steer output with the lateral controller.
         steer_output = 0
 
-        print("\n")
+        #print("\n")
 
         # Get waypoint that is nearest to front wheel
         wp_ind = np.argmin([distance_vehicle_no_transform_wp(wp, self.get_front_axle_position()) for wp in waypoints])
@@ -109,17 +115,17 @@ class LateralVehicleController(VehicleController):
 
         if abs(yaw_diff_norm) < math.radians(1):
             yaw_diff_norm = 0
-        print("yaw_car ", yaw)
-        print("yaw_path ", yaw_path)
-        print("yaw_diff", yaw_diff)
-        print("yaw_diff_norm", yaw_diff_norm)
+        #print("yaw_car ", yaw)
+        #print("yaw_path ", yaw_path)
+        #print("yaw_diff", yaw_diff)
+        #print("yaw_diff_norm", yaw_diff_norm)
 
         # 2. calculate crosstrack error wrt the trajectory
         #crosstrack_error = np.sqrt(np.min(np.sum((position - wp_target[:2]) ** 2)))
         #crosstrack_error2 = np.min(np.linalg.norm(position - wp_target[:2]))
         crosstrack_error = np.min(np.linalg.norm(np.array([self.get_front_axle_position().location.x, self.get_front_axle_position().location.y]) - wp_target[:2]))**2
 
-        print("crosstrack_error_distance ", crosstrack_error)
+        #print("crosstrack_error_distance ", crosstrack_error)
 
         front_axle_position = self.get_front_axle_position().location
         front_axle_vec = [front_axle_position.x, front_axle_position.y]
@@ -129,26 +135,28 @@ class LateralVehicleController(VehicleController):
 
         crosstrack_error = np.linalg.norm(wp_target[:2] - a1_projection)
 
-        print("crosstrack_error_distance norm ", crosstrack_error)
+        #print("crosstrack_error_distance norm ", crosstrack_error)
 
         yaw_cross_track = np.arctan2(wp_target[1] - self.get_front_axle_position().location.y, wp_target[0] - self.get_front_axle_position().location.x)
         # yaw_path2ct = yaw_cross_track - yaw
-        print("yaw_cross_track ", yaw_cross_track)
+       # print("yaw_cross_track ", yaw_cross_track)
         yaw_cross_track = self.normalize_angle(yaw_cross_track)
         yaw_path2ct = self.normalize_angle(yaw_path - yaw_cross_track)
 
-        print("yaw_path2ct ", yaw_path2ct)
+        #print("yaw_path2ct ", yaw_path2ct)
 
         if yaw_path2ct < 0:
             crosstrack_error = abs(crosstrack_error)
         else:
             crosstrack_error = - abs(crosstrack_error)
 
+        if abs(crosstrack_error) < 0.1:
+            crosstrack_error=0
+
         yaw_diff_crosstrack = np.arctan(self.k_e * crosstrack_error / (self.k_v + velocity))
 
-        print("yaw_diff_crosstrack ", yaw_diff_crosstrack)
-        if abs(yaw_diff_crosstrack) < 0.03:
-            yaw_diff_crosstrack=0
+        #print("yaw_diff_crosstrack ", yaw_diff_crosstrack)
+
         # yaw_diff_crosstrack=0
         # print(crosstrack_error, yaw_diff, yaw_diff_crosstrack)
 
@@ -158,32 +166,35 @@ class LateralVehicleController(VehicleController):
 
         yaw_rate_damping = - 0 * (yaw_rate_ego - yaw_rate_trajectory)
 
-        print("yaw_rate_damping ", yaw_rate_damping)
+        #print("yaw_rate_damping ", yaw_rate_damping)
 
 
         # 3. control low
         steer_expect = 1.3 * yaw_diff_norm + yaw_diff_crosstrack + yaw_rate_damping
 
+        if abs(steer_expect) < np.radians(1):
+            steer_expect=0
         # if steer_expect > np.pi:
         #    steer_expect -= 2 * np.pi
         # if steer_expect < - np.pi:
         #    steer_expect += 2 * np.pi
 
-        print("steer_expect ", steer_expect)
+        #print("steer_expect ", steer_expect)
 
         # steer_expect = min(1.22, steer_expect)
         # steer_expect = max(-1.22, steer_expect) / 1.22
-        print("steer_expect", steer_expect)
+        #print("steer_expect", steer_expect)
         # 4. update
         steer_output = - steer_expect
 
         input_steer = (180.0 / np.pi) * steer_output / 69.999  # Max steering angle
-        print("steerbefore ", input_steer)
+        #print("steerbefore ", input_steer)
 
         # Clamp the steering command to valid bounds
         # steer = np.fmax(np.fmin(input_steer, 1.0), -1.0)
         steer = np.clip(input_steer, -1.0, 1.0)
-        print("steer ", steer)
+        #print("steer ", steer)
+        #print("steer in degree", steer*70)
 
         self.yaw_previous = yaw
         self.wp_target_previous = wp_target

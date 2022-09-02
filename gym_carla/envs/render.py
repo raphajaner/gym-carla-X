@@ -469,7 +469,7 @@ class BirdeyeRender(object):
                 if n > 15:
                     break
 
-        return (vehicles, walkers)
+        return vehicles, walkers
 
     def _render_hist_actors(self, surface, actor_polygons, actor_type, world_to_pixel, num):
         lp = len(actor_polygons)

@@ -1,308 +1,182 @@
-import carla
+import copy
+import time
+
 import numpy as np
+from numpy import random
+from gym_carla.envs.sensors.sensor_manager import SensorManager
+from gym_carla.envs.actors.actor_manager import ActorManager
+import psutil, os, signal, subprocess
 import logging
-
-SpawnActor = carla.command.SpawnActor
-SetAutopilot = carla.command.SetAutopilot
-FutureActor = carla.command.FutureActor
+import carla
 
 
-class CarlaManager():
+def is_used(port):
+    """Checks whether or not a port is used"""
+    return port in [conn.laddr.port for conn in psutil.net_connections()]
+
+
+def kill_all_servers():
+    """Kill all PIDs that start with Carla"""
+    processes = [p for p in psutil.process_iter() if "carla" in p.name().lower()]
+    for process in processes:
+        os.kill(process.pid, signal.SIGKILL)
+
+
+class CarlaManager:
     def __init__(self, params, verbose=1):
+        """ Manages the connection between a Carla server and corresponding client."""
+        self.params = copy.deepcopy(params)
 
-        # Connect to carla server and get world object
-        print('connecting to Carla server...')
-        self.client = carla.Client('localhost', params['port'])
-        self.client.set_timeout(10.0)
-        self.world = self.client.load_world(params['town'])
-        if verbose > 0:
-            print('Carla server connected!')
+        self.client = None
+        self.world = None
+        self.map = None
+        self.spectator = None
 
-        self.params = params
-        self.display_size = params['display_size']  # rendering screen size
-        self.max_past_step = params['max_past_step']
-        self.number_of_vehicles = params['number_of_vehicles']
-        self.number_of_walkers = params['number_of_walkers']
-        self.dt = params['dt']
-        self.task_mode = params['task_mode']
-        self.max_time_episode = params['max_time_episode']
-        self.max_waypt = params['max_waypt']
-        self.obs_range = params['obs_range']
-        self.lidar_bin = params['lidar_bin']
-        self.d_behind = params['d_behind']
-        self.obs_size = int(self.obs_range / self.lidar_bin)
-        self.out_lane_thres = params['out_lane_thres']
-        self.desired_speed = params['desired_speed']
-        self.max_ego_spawn_times = params['max_ego_spawn_times']
-        self.display_route = params['display_route']
-        if 'pixor' in params.keys():
-            self.pixor = params['pixor']
-            self.pixor_size = params['pixor_size']
-        else:
-            self.pixor = False
-
-
-
-
-
-        self.dt = None
-        self.settings = self.world.get_settings()
-        self.spectator = self.world.get_spectator()
+        self.settings = None
+        self.server_port = 2000  # TODO
+        self.tm_port = None
         self.synchronous_mode = None
-        self._init_traffic_manager(params)
+        self.dt = None
 
-        # self.actor_list = []
-        self.vehicles_list = []
-        self.walkers_list = []
-        self.sensors_list = []
-        self.all_id = []
-        self.ego = None
+        self.traffic_manager = None
+        self.sensor_manager = None
+        self.actor_manager = None
 
+        self.current_w_frame = None
 
-        self.vehicle_spawn_points = list(self.world.get_map().get_spawn_points())
+        self.setup_experiment()
 
-        # Set weather
-        self.world.set_weather(carla.WeatherParameters.ClearNoon)
+    def setup_experiment(self):
+        # self.init_server(self) TODO
+        self.connect_client()
 
-        self.world.set_pedestrians_cross_factor(1)
+        self.world = self.client.get_world()
+        self.settings = self.world.get_settings()
+        if self.params['carla_no_rendering']:
+            self.set_no_rendering_mode()
+        self.spectator = self.world.get_spectator()
 
-    def spawn_ego(self):
+        self.init_traffic_manager()
 
-        self._create_ego_bp()
-        self._create_collision_sensor_bp()
-        self._create_lidar_bp()
-        self._create_camera_bp()
+        self.actor_manager = ActorManager(self.params, self.client)
+        self.sensor_manager = SensorManager(self.params, self.client)
 
-        self.max_ego_spawn_times = 10
-        self.task_mode = 'random'
-        # Spawn the ego vehicle
-        ego_spawn_times = 0
-        vehicle = None
+        if self.params['weather'] == 'ClearNoon':
+            self.world.set_weather(carla.WeatherParameters.ClearNoon)
+        self.world.set_pedestrians_cross_factor(self.params['pedestrian_cross_factor'])
 
-        # while True:
-        #     if ego_spawn_times > self.max_ego_spawn_times:
-        #        self.reset()
+    def init_server(self):
+        # Taken from https://github.com/carla-simulator/rllib-integration
+        """Start a server on a random port"""
+        self.server_port = random.randint(15000, 32000)
 
-        transform = np.random.choice(self.vehicle_spawn_points)
-        self.ego = self.world.try_spawn_actor(self.ego_bp, transform)
+        # Ray tends to start all processes simultaneously. Use random delays to avoid problems
+        time.sleep(random.uniform(0, 1))
 
-        # TODO Make while loop to make sure that there is no vehicle so far!!
+        uses_server_port = is_used(self.server_port)
+        uses_stream_port = is_used(self.server_port + 1)
+        while uses_server_port and uses_stream_port:
+            if uses_server_port:
+                print("Is using the server port: " + self.server_port)
+            if uses_stream_port:
+                print("Is using the streaming port: " + str(self.server_port + 1))
+            self.server_port += 2
+            uses_server_port = is_used(self.server_port)
+            uses_stream_port = is_used(self.server_port + 1)
 
-        # Add collision sensor
-        self.collision_sensor = self.world.spawn_actor(self.collision_bp, carla.Transform(), attach_to=self.ego)
-        self.collision_sensor.listen(lambda event: get_collision_hist(event))
-
-        def get_collision_hist(event):
-            impulse = event.normal_impulse
-            intensity = np.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
-            self.collision_hist.append(intensity)
-            if len(self.collision_hist) > self.collision_hist_l:
-                self.collision_hist.pop(0)
-
-        self.collision_hist = []
-
-        # Add lidar sensor
-        self.lidar_sensor = self.world.spawn_actor(self.lidar_bp, self.lidar_trans, attach_to=self.ego)
-        self.lidar_sensor.listen(lambda data: get_lidar_data(data))
-
-        def get_lidar_data(data):
-            self.lidar_data = data
-
-        # Add camera sensor
-        self.camera_sensor = self.world.spawn_actor(self.camera_bp, self.camera_trans, attach_to=self.ego)
-        self.camera_sensor.listen(lambda data: get_camera_img(data))
-
-        def get_camera_img(data):
-            array = np.frombuffer(data.raw_data, dtype=np.dtype("uint8"))
-            array = np.reshape(array, (data.height, data.width, 4))
-            array = array[:, :, :3]
-            array = array[:, :, ::-1]
-            self.camera_img = array
-
-        return self.ego
-
-    def spawn_vehicle(self, n_vehicles):
-        batch_vehicle = []
-        blueprints = [self._create_vehicle_bp() for _ in range(n_vehicles)]
-
-        for n, transform in enumerate(self.vehicle_spawn_points):
-            if n >= n_vehicles:
-                break
-            blueprint = np.random.choice(blueprints)
-            if blueprint.has_attribute('color'):
-                color = np.random.choice(blueprint.get_attribute('color').recommended_values)
-                blueprint.set_attribute('color', color)
-            if blueprint.has_attribute('driver_id'):
-                driver_id = np.random.choice(blueprint.get_attribute('driver_id').recommended_values)
-                blueprint.set_attribute('driver_id', driver_id)
-
-            # if hero:
-            #    blueprint.set_attribute('role_name', 'hero')
-            #    hero = False
-            # else:
-            blueprint.set_attribute('role_name', 'autopilot')
-
-            # spawn the cars and set their autopilot and light state all together
-            batch_vehicle.append(SpawnActor(blueprint, transform)
-                                 .then(SetAutopilot(FutureActor, True, self.traffic_manager.get_port())))
-
-        for response in self.client.apply_batch_sync(batch_vehicle, self.synchronous_mode):
-            if response.error:
-                logging.error(response.error)
-            else:
-                self.vehicles_list.append(response.actor_id)
-
-        # Set automatic vehicle lights update if specified
-        car_lights_on = False
-        if car_lights_on:
-            all_vehicle_actors = self.world.get_actors(self.vehicles_list)
-            for actor in all_vehicle_actors:
-                self.traffic_manager.update_vehicle_lights(actor, True)
-
-        print("Spawned some vehicles")
-
-    def spawn_pedestrians(self, n_walker):
-        bp_walker = [self._create_walker_bp() for _ in range(n_walker)]
-        percentagePedestriansRunning = 0.0  # how many pedestrians will run
-        percentagePedestriansCrossing = 1.0
-
-        # if args.seedw:
-        #    world.set_pedestrians_seed(args.seedw)
-        #    random.seed(args.seedw)
-
-        # 1. take all the random locations to spawn
-        walker_spawn_points = []
-        for i in range(n_walker):
-            spawn_point = carla.Transform()
-            loc = self.world.get_random_location_from_navigation()
-            if (loc != None):
-                spawn_point.location = loc
-                walker_spawn_points.append(spawn_point)
-
-        # 2. we spawn the walker object
-        batch = []
-        walker_speed = []
-        for spawn_point in walker_spawn_points:
-            # TODO: Allows to choise the same oint several times!!
-            walker_bp = np.random.choice(bp_walker)
-            # set as not invincible
-            if walker_bp.has_attribute('is_invincible'):
-                walker_bp.set_attribute('is_invincible', 'false')
-            # set the max speed
-            if walker_bp.has_attribute('speed'):
-                if (np.random.random() > percentagePedestriansRunning):
-                    # walking
-                    walker_speed.append(walker_bp.get_attribute('speed').recommended_values[1])
-                else:
-                    # running
-                    walker_speed.append(walker_bp.get_attribute('speed').recommended_values[2])
-            else:
-                print("Walker has no speed")
-                walker_speed.append(0.0)
-            batch.append(SpawnActor(walker_bp, spawn_point))
-
-        results = self.client.apply_batch_sync(batch, self.synchronous_mode)
-
-        # for results in self.client.apply_batch_sync(batch, self.synchronous_mode):
-        #    if results.error:
-        #        logging.error(results.error)
-        #    else:
-        #        self.vehicles_list.append(results.actor_id)
-
-        # TODO: Only needed to get red of pedestrians that did not get spawned
-        walker_speed2 = []
-        for i in range(len(results)):
-            if results[i].error:
-                logging.error(results[i].error)
-            else:
-                self.walkers_list.append({"id": results[i].actor_id})
-                walker_speed2.append(walker_speed[i])
-        walker_speed = walker_speed2
-
-        # 3. we spawn the walker controller
-        batch = []
-        walker_controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
-
-        for i in range(len(self.walkers_list)):
-            batch.append(SpawnActor(walker_controller_bp, carla.Transform(), self.walkers_list[i]["id"]))
-
-        results = self.client.apply_batch_sync(batch, self.synchronous_mode)
-        for i in range(len(results)):
-            if results[i].error:
-                logging.error(results[i].error)
-            else:
-                self.walkers_list[i]["con"] = results[i].actor_id
-
-        # 4. we put together the walkers and controllers id to get the objects from their id
-        for i in range(len(self.walkers_list)):
-            self.all_id.append(self.walkers_list[i]["con"])
-            self.all_id.append(self.walkers_list[i]["id"])
-
-        self.all_actors = self.world.get_actors(self.all_id)
-
-        # wait for a tick to ensure client receives the last transform of the walkers we have just created
-        if self.synchronous_mode:
-            self.world.tick()
+        if self.params["show_display"]:
+            server_command = [
+                "{}/CarlaUE4.sh".format(os.environ["CARLA_ROOT"]),
+                "-windowed",
+                "-ResX={}".format(self.params["resolution_x"]),
+                "-ResY={}".format(self.params["resolution_y"]),
+            ]
         else:
-            self.world.wait_for_tick()
+            server_command = [
+                "DISPLAY= ",
+                "{}/CarlaUE4.sh".format(os.environ["CARLA_ROOT"]),
+                "-opengl"  # no-display isn't supported for Unreal 4.24 with vulkan
+            ]
 
-        # 5. initialize each controller and set target to walk to (list is [controler, actor, controller, actor ...])
-        # set how many pedestrians can cross the road
-        self.world.set_pedestrians_cross_factor(percentagePedestriansCrossing)
-        for i in range(0, len(self.all_id), 2):
-            # start walker
-            self.all_actors[i].start()
-            # set walk to random point
-            self.all_actors[i].go_to_location(self.world.get_random_location_from_navigation())
-            # max speed
-            self.all_actors[i].set_max_speed(float(walker_speed[int(i / 2)]))
+        server_command += [
+            "--carla-rpc-port={}".format(self.server_port),
+            "-quality-level={}".format(self.params["quality_level"])
+        ]
 
-        # print('spawned %d vehicles and %d walkers, press Ctrl+C to exit.' % (len(vehicles_list), len(walkers_list)))
+        server_command_text = " ".join(map(str, server_command))
+        print(server_command_text)
+        server_process = subprocess.Popen(
+            server_command_text,
+            shell=True,
+            preexec_fn=os.setsid,
+            stdout=open(os.devnull, "w"),
+        )
 
-        print("Spawned walkers")
+    def connect_client(self):
+        # Taken from https://github.com/carla-simulator/rllib-integration
+        logging.info('Connecting to Carla server...')
+        for i in range(self.params["retries_on_error"]):
+            try:
+                self.client = carla.Client(self.params["host"], self.server_port)
+                self.client.set_timeout(self.params["timeout"])
+                self.world = self.client.load_world(self.params['town'])
 
-    def clear_all_actors(self):
-        # Delete sensors, vehicles and walkers
-        print('\nDestroying %d vehicles' % len(self.vehicles_list))
-        self.client.apply_batch([carla.command.DestroyActor(x) for x in self.vehicles_list])
+                # settings = self.world.get_settings()
+                # settings.no_rendering_mode = not self.params["enable_rendering"]
+                # settings.synchronous_mode = True
+                # settings.fixed_delta_seconds = self.params["timestep"]
+                # self.world.apply_settings(settings)
+                # self.world.tick()
+                logging.info('Carla server connected!')
+                return
 
-        if self.ego.is_alive:
-            self.collision_sensor.stop()
-            self.collision_sensor.destroy()
+            except Exception as e:
+                print(" Waiting for server to be ready: {}, attempt {} of {}".format(e, i + 1,
+                                                                                     self.params["retries_on_error"]))
+                time.sleep(3)
 
-            self.camera_sensor.stop()
-            self.camera_sensor.destroy()
+        raise Exception(
+            "Cannot connect to server. Try increasing 'timeout' or 'retries_on_error' at the carla configuration")
 
-            self.lidar_sensor.stop()
-            self.lidar_sensor.destroy()
+    def init_traffic_manager(self):
+        # self.tm_port = self.server_port // 10 + self.server_port % 10
+        # while is_used(self.tm_port):
+        #    print("Traffic manager's port " + str(self.tm_port) + " is already being used. Checking the next one")
+        #    tm_port += 1
+        # print("Traffic manager connected to port " + str(self.tm_port))
 
-            self.ego.destroy()
-
-
-        # Stop walker controllers (list is [controller, actor, controller, actor ...])
-        for i in range(0, len(self.all_id), 2):
-            self.all_actors[i].stop()
-
-        print('\nDestroying %d walkers' % len(self.walkers_list))
-        self.client.apply_batch([carla.command.DestroyActor(x) for x in self.all_id])
-
-    def _init_traffic_manager(self, params, verbose=1):
         # Setup for traffic manager
         self.traffic_manager = self.client.get_trafficmanager()
         self.traffic_manager.set_global_distance_to_leading_vehicle(2.5)
         self.traffic_manager.set_synchronous_mode(True)
         self.traffic_manager.set_hybrid_physics_mode(True)
         self.traffic_manager.set_hybrid_physics_radius(70.0)
-        # self.traffic_manager.global_percentage_speed_difference(30.0)
-        if verbose > 0:
-            print('Traffic manager created!')
+        logging.info(f'Port of the traffic manager is {self.traffic_manager.get_port()}.')
+        logging.info(f'Traffic manager has been created.')
 
-    def set_spectator_view(self, view=carla.Transform()):
+    def tick(self, timeout=10):
+        # Send tick to server to move one tick forward, returns the frame number of the snapshot the world will be in
+        # after the tick
+        self.current_w_frame = self.world.tick()
+        logging.debug(f'World frame after tick: {self.current_w_frame}')
+
+        # Move spectator to follow the ego car
+        sensors_data = self.sensor_manager.get_data(self.current_w_frame)
+        assert all(frame == self.current_w_frame for frame, _ in sensors_data.values())
+        return sensors_data
+
+    def set_spectator_camera_view(self, view=carla.Transform(), z_offset=0):
         # Get the location and rotation of the spectator through its transform
         # transform = self.spectator.get_transform()
+        view.location.z += z_offset
+        vec = view.rotation.get_forward_vector()
+        view.location.x -= 2 * vec.x
+        view.location.y -= 2 * vec.y
+
+        view.rotation.pitch = -20
         self.spectator.set_transform(view)
 
-    def set_synchronous_mode(self, params, verbose=1):
+    def set_synchronous_mode(self, params):
         # Set fixed simulation step for synchronous mode
         self.settings.synchronous_mode = True
         self.dt = params['dt']
@@ -310,71 +184,22 @@ class CarlaManager():
         self.world.apply_settings(self.settings)
         self.synchronous_mode = True
 
-    def set_asynchronous_mode(self, verbose=1):
+    def set_asynchronous_mode(self):
         self.settings.synchronous_mode = False
         self.world.apply_settings(self.settings)
         self.synchronous_mode = False
+        logging.warning('Carla simulation set to asynchronous mode.')
 
     def set_no_rendering_mode(self):
         self.settings.no_rendering_mode = True
         self.world.apply_settings(self.settings)
+        logging.warning('Carla simulation set to no rendering mode.')
 
-    def _create_ego_bp(self):
-        self.ego_bp = self._create_vehicle_bp(self.params['ego_vehicle_filter'], color='49,8,8')
-        self.ego_bp.set_attribute('role_name', 'hero')
-        # self._create_collision_sensor()
+    def clear_all_actors(self):
+        self.sensor_manager.close_all_sensors()
+        self.actor_manager.clear_all_actors()
 
-    def _create_vehicle_bp(self, ego_vehicle_filter='vehicle.*', color=None):
-        """Returns:
-        bp: the blueprint object of carla.
-        """
-
-        blueprints = self.world.get_blueprint_library().filter(ego_vehicle_filter)
-        blueprint_library = []
-
-        for nw in [4]:
-            blueprint_library = blueprint_library + [x for x in blueprints if
-                                                     int(x.get_attribute('number_of_wheels')) == nw]
-        bp = np.random.choice(blueprint_library)
-
-        if bp.has_attribute('color'):
-            if not color:
-                color = np.random.choice(bp.get_attribute('color').recommended_values)
-            bp.set_attribute('color', color)
-
-        return bp
-
-    def _create_walker_bp(self):
-        walker_bp = np.random.choice(self.world.get_blueprint_library().filter('walker.*'))
-        # set as not invencible
-        if walker_bp.has_attribute('is_invincible'):
-            walker_bp.set_attribute('is_invincible', 'false')
-
-        # walker_controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
-        return walker_bp  # , walker_controller_bp
-
-    def _create_collision_sensor_bp(self):
-        self.collision_hist = []  # The collision history
-        self.collision_hist_l = 1  # collision history length
-        self.collision_bp = self.world.get_blueprint_library().find('sensor.other.collision')
-
-        # Lidar sensor
-
-    def _create_lidar_bp(self):
-        self.lidar_data = None
-        self.lidar_height = 2.1
-        self.lidar_trans = carla.Transform(carla.Location(x=0.0, z=self.lidar_height))
-        self.lidar_bp = self.world.get_blueprint_library().find('sensor.lidar.ray_cast')
-        self.lidar_bp.set_attribute('channels', '32')
-        self.lidar_bp.set_attribute('range', '5000')
-
-    def _create_camera_bp(self):
-        self.camera_img = np.zeros((self.obs_size, self.obs_size, 3), dtype=np.uint8)
-        self.camera_trans = carla.Transform(carla.Location(x=0.8, z=1.7))
-        self.camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
-        # Modify the attributes of the blueprint to set image resolution and field of view.
-        self.camera_bp.set_attribute('image_size_x', str(self.obs_size))
-        self.camera_bp.set_attribute('image_size_y', str(self.obs_size))
-        self.camera_bp.set_attribute('fov', '110')
-        # Set the time in seconds between sensor captures
-        self.camera_bp.set_attribute('sensor_tick', '0.02')
+        if self.world.get_settings().synchronous_mode:
+            self.world.tick()
+        else:
+            self.world.wait_for_tick()

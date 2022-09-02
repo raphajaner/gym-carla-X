@@ -4,25 +4,34 @@
 #
 # This work is licensed under the terms of the MIT license.
 # For a copy, see <https://opensource.org/licenses/MIT>.
+import faulthandler;
+
+faulthandler.enable()
 
 import time
+import logging
 
+logging.basicConfig(format='%(asctime)s [%(levelname)s] \t %(message)s', level=logging.INFO,
+                    datefmt='%d-%b-%y %H:%M:%S')
+from datetime import timedelta
 import gym
+import gym_carla
+
 
 def main():
     # parameters for the gym_carla environment
     params = {
-        'number_of_vehicles': 0,
-        'number_of_walkers': 0,
-        'display_size': 196,  # screen size of bird-eye render
-        'max_past_step': 1,  # the number of past steps to draw
+        'number_of_vehicles': 1,
+        'number_of_walkers': 1,
+        'display_size': 256,  # screen size of bird-eye render
+        'max_past_step': 2,  # the number of past steps to draw
         'dt': 0.1,  # time interval between two frames
         'discrete': False,  # whether to use discrete control space
         'discrete_acc': [-3.0, 0.0, 3.0],  # discrete value of accelerations
         'discrete_steer': [-0.2, 0.0, 0.2],  # discrete value of steering angles
         'continuous_accel_range': [-3.0, 3.0],  # continuous acceleration range
         'continuous_steer_range': [-0.3, 0.3],  # continuous steering angle range
-        'ego_vehicle_filter': 'vehicle.lincoln*',  # filter for defining ego vehicle
+        'ego_vehicle_filter': 'vehicle.mercedes.coupe_2020',  # filter for defining ego vehicle
         'port': 2000,  # connection port
         'town': 'Town02',  # which town to simulate
         'task_mode': 'random',  # mode of the task, [random, roundabout (only for Town03)]
@@ -37,15 +46,33 @@ def main():
         'display_route': True,  # whether to render the desired route
         'pixor_size': 64,  # size of the pixor labels
         'pixor': False,  # whether to output PIXOR observation
+        'retries_on_error': 10,
+        'timeout': 2,
+        'host': '127.0.0.1',
+        'weather': 'ClearNoon',
+        'pedestrian_cross_factor': 1,
+        'ego_spawn_times': 10,
+        'sensors': ['RGBCamera', 'Lidar', 'CollisionSensor'],
+        'follow_cam_ego': True,
+        'display_rendering': True,
+        'carla_no_rendering': False
     }
     # Set gym-carla environment
-    env = gym.make('carla-v0', params=params, new_step_api=True)
-
+    start_time = time.time()
+    env = gym.make('carla-v1', params=params, new_step_api=True)
+    blueprint_library = env.world.get_blueprint_library()
+    [print(bp.id) for bp in blueprint_library.filter('vehicle.*.*')]
     try:
-        env.run()
+
+        env.run(reset_time=30)
     finally:
+        logging.info(f'Env run for {str(timedelta(seconds=time.time() - start_time))}s.')
         env.close()
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+
+    finally:
+        logging.info("\nStopped running! Ciao, see you soon!")
