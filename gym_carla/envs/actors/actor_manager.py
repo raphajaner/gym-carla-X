@@ -26,6 +26,15 @@ class ActorManager:
 
         self.vehicle_spawn_points = list(self.world.get_map().get_spawn_points())
 
+        self.walker_bps = [create_walker_bp(self.world) for _ in range(100)]
+        self.walker_spawn_points = []
+        for _ in range(1000):
+            spawn_point = carla.Transform()
+            loc = self.world.get_random_location_from_navigation()
+            if loc is not None:
+                spawn_point.location = loc
+                self.walker_spawn_points.append(spawn_point)
+
     def spawn_ego(self, params):
         ego_bp = create_ego_bp(params, self.world)
 
@@ -119,23 +128,14 @@ class ActorManager:
 
     def _spawn_batch_walkers(self, n_walker):
         t1 = time.time()
-        blueprints = [create_walker_bp(self.world) for _ in range(n_walker)]
-        logging.debug(f'Creating blueprints took {time.time() - t1}s')
-        # 1. Take all the random locations to spawn
-        walker_spawn_points = []
-        for _ in range(n_walker):
-            spawn_point = carla.Transform()
-            loc = self.world.get_random_location_from_navigation()
-            if loc is not None:
-                spawn_point.location = loc
-                walker_spawn_points.append(spawn_point)
+        # TODO: Add to init
 
         # 2. we spawn the walker object
         # walker_speed = []
-        np.random.shuffle(blueprints)
-
+        walker_bps = np.random.choice(self.walker_bps, n_walker, replace=False)
+        walker_spawn_points = np.random.choice(self.walker_spawn_points, n_walker, replace=False)
         walkers_list = []
-        batch = [SpawnActor(bp, sp) for (bp, sp) in zip(blueprints, walker_spawn_points)]
+        batch = [SpawnActor(bp, sp) for (bp, sp) in zip(walker_bps, walker_spawn_points)]
 
         response = self.client.apply_batch_sync(batch, False)
 

@@ -87,13 +87,15 @@ class CarlaEnv(gym.Env):
 
         self.carla_manager.clear_all_actors()
         # Disable sync mode for spawning
-        self.carla_manager.set_asynchronous_mode()
+        #self.carla_manager.set_asynchronous_mode()
         self.carla_manager.actor_manager.spawn_vehicles(self.params['number_of_vehicles'])
         self.carla_manager.actor_manager.spawn_walkers(self.params['number_of_walkers'])
         self.carla_manager.actor_manager.spawn_ego(self.params)
         self.carla_manager.sensor_manager.spawn_ego_sensors(self.ego)
-        self.carla_manager.set_synchronous_mode(self.params)
-
+        self.world.tick()
+        #self.carla_manager.set_synchronous_mode(self.params)
+        time.sleep(0.1)
+        logging.info('Spawning vehicles for reset is done!')
         # Update timesteps
         self.time_step = 0
         self.reset_step += 1

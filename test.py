@@ -21,8 +21,8 @@ import gym_carla
 def main():
     # parameters for the gym_carla environment
     params = {
-        'number_of_vehicles': 1,
-        'number_of_walkers': 1,
+        'number_of_vehicles': 12,
+        'number_of_walkers': 50,
         'display_size': 256,  # screen size of bird-eye render
         'max_past_step': 2,  # the number of past steps to draw
         'dt': 0.1,  # time interval between two frames
