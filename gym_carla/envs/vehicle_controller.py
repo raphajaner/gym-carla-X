@@ -29,6 +29,12 @@ class VehicleController():
 
         return offset_length
 
+    #def calc_steering_angle(self):
+    # For each Wheel Physics Control, print maximum steer anglewwsasdwa
+    # physics_control = self.ego.get_physics_control()
+    #    for wheel in physics_control.wheels:
+    #    #    print(wheel.max_steer_angle)
+
     @staticmethod
     def normalize_angle(angle):
         """

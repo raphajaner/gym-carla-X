@@ -35,7 +35,7 @@ def create_walker_bp(world):
     walker_bp = np.random.choice(world.get_blueprint_library().filter('walker.*'))
     # set as not invencible
     if walker_bp.has_attribute('is_invincible'):
-        walker_bp.set_attribute('is_invincible', 'false')
+        walker_bp.set_attribute('is_invincible', 'true')
 
     # walker_controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
     return walker_bp  # , walker_controller_bp

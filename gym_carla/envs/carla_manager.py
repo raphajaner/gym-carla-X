@@ -9,6 +9,7 @@ import psutil, os, signal, subprocess
 import logging
 import carla
 
+
 def is_used(port):
     """Checks whether or not a port is used"""
     return port in [conn.laddr.port for conn in psutil.net_connections()]
@@ -45,19 +46,24 @@ class CarlaManager:
 
         self.setup_experiment()
 
-        # We create the sensor queue in which we keep track of the information
-        # already received. This structure is thread safe and can be
-        # accessed by all the sensors callback concurrently without problem.
+    def setup_experiment(self):
+        # self.init_server(self) TODO
+        self.connect_client()
 
-        # Sensor stuff
-        #self.obs_range = params['obs_range']
-        #self.lidar_bin = params['lidar_bin']
-        #self.params["obs_size"] = int(self.obs_range / self.lidar_bin)
-        #self.max_ego_spawn_times = params['max_ego_spawn_times']
+        self.world = self.client.get_world()
+        self.settings = self.world.get_settings()
+        if self.params['carla_no_rendering']:
+            self.set_no_rendering_mode()
+        self.spectator = self.world.get_spectator()
 
-        # self.dt = None
-        # self.settings = self.world.get_settings()
-        # self.spectator = self.world.get_spectator()
+        self.init_traffic_manager()
+
+        self.actor_manager = ActorManager(self.params, self.client)
+        self.sensor_manager = SensorManager(self.params, self.client)
+
+        if self.params['weather'] == 'ClearNoon':
+            self.world.set_weather(carla.WeatherParameters.ClearNoon)
+        self.world.set_pedestrians_cross_factor(self.params['pedestrian_cross_factor'])
 
     def init_server(self):
         # Taken from https://github.com/carla-simulator/rllib-integration
@@ -132,23 +138,6 @@ class CarlaManager:
         raise Exception(
             "Cannot connect to server. Try increasing 'timeout' or 'retries_on_error' at the carla configuration")
 
-    def setup_experiment(self):
-        # self.init_server(self) TODO
-        self.connect_client()
-
-        self.world = self.client.get_world()
-        self.settings = self.world.get_settings()
-        self.spectator = self.world.get_spectator()
-
-        self.init_traffic_manager()
-
-        self.sensor_manager = SensorManager()
-        self.actor_manager = ActorManager(self.client)
-
-        if self.params['weather'] == 'ClearNoon':
-            self.world.set_weather(carla.WeatherParameters.ClearNoon)
-        self.world.set_pedestrians_cross_factor(self.params['pedestrian_cross_factor'])
-
     def init_traffic_manager(self):
         # self.tm_port = self.server_port // 10 + self.server_port % 10
         # while is_used(self.tm_port):
@@ -163,7 +152,7 @@ class CarlaManager:
         self.traffic_manager.set_hybrid_physics_mode(True)
         self.traffic_manager.set_hybrid_physics_radius(70.0)
         logging.info(f'Port of the traffic manager is {self.traffic_manager.get_port()}.')
-        logging.info('Traffic manager has been created.')
+        logging.info(f'Traffic manager has been created.')
 
     def tick(self, timeout=10):
         # Send tick to server to move one tick forward, returns the frame number of the snapshot the world will be in
@@ -172,10 +161,9 @@ class CarlaManager:
         logging.debug(f'World frame after tick: {self.current_w_frame}')
 
         # Move spectator to follow the ego car
-        self.set_spectator_camera_view(self.actor_manager.ego.get_transform(), z_offset=5)
         sensors_data = self.sensor_manager.get_data(self.current_w_frame)
-        assert all(frame == self.current_w_frame for frame, _ in sensors_data.items())
-        return
+        assert all(frame == self.current_w_frame for frame, _ in sensors_data.values())
+        return sensors_data
 
     def set_spectator_camera_view(self, view=carla.Transform(), z_offset=0):
         # Get the location and rotation of the spectator through its transform
@@ -208,5 +196,10 @@ class CarlaManager:
         logging.warning('Carla simulation set to no rendering mode.')
 
     def clear_all_actors(self):
-        self.sensor_manager.close()
+        self.sensor_manager.close_all_sensors()
         self.actor_manager.clear_all_actors()
+
+        if self.world.get_settings().synchronous_mode:
+            self.world.tick()
+        else:
+            self.world.wait_for_tick()

@@ -72,12 +72,13 @@ class RGBCamera(ContinuousSensor):
     def __init__(self, name, params, manager, parent):
         self.world = parent.get_world()
 
-        self.obs_size = params['obs_size']
+        self.obs_size = int(params['obs_range'] / params['lidar_bin'])
+        self.camera_img = None
         bp, transform = self.create_bp()
         super().__init__(name, params, manager, parent, bp, transform)
 
     def create_bp(self):
-        camera_img = np.zeros((self.obs_size, self.obs_size, 3), dtype=np.uint8)
+        self.camera_img = np.zeros((self.obs_size, self.obs_size, 3), dtype=np.uint8)
         transform = carla.Transform(carla.Location(x=0.8, z=1.7))
         bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
 
@@ -101,14 +102,15 @@ class RGBCamera(ContinuousSensor):
 class Lidar(ContinuousSensor):
     def __init__(self, name, params, manager, parent):
         self.world = parent.get_world()
-        self.obs_size = params['obs_size']
+        self.obs_size = int(params['obs_range'] / params['lidar_bin'])
+        self.lidar_height = None
 
         bp, transform = self.create_bp()
         super().__init__(name, params, manager, parent, bp, transform)
 
     def create_bp(self):
-        lidar_height = 2.1
-        transform = carla.Transform(carla.Location(x=0.0, z=lidar_height))
+        self.lidar_height = 2.1
+        transform = carla.Transform(carla.Location(x=0.0, z=self.lidar_height))
         bp = self.world.get_blueprint_library().find('sensor.lidar.ray_cast')
         bp.set_attribute('channels', '32')
         bp.set_attribute('range', '5000')

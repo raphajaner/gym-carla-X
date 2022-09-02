@@ -12,7 +12,8 @@ DestroyActor = carla.command.DestroyActor
 
 class ActorManager:
 
-    def __init__(self, client):
+    def __init__(self, params, client):
+        self.params = params
         self.client = client
         self.world = self.client.get_world()
 
@@ -50,9 +51,7 @@ class ActorManager:
             return
         self.all_id_list.append(self.ego.id)
 
-        return self.ego
-
-    def spawn_vehicles(self, n_vehicles):
+    def spawn_vehicles(self, n_vehicles, traffic_manager_get_port=8000):
         batch_vehicle = []
         blueprints = [create_vehicle_bp(self.world) for _ in range(n_vehicles)]
 
@@ -66,13 +65,9 @@ class ActorManager:
             if blueprint.has_attribute('driver_id'):
                 driver_id = np.random.choice(blueprint.get_attribute('driver_id').recommended_values)
                 blueprint.set_attribute('driver_id', driver_id)
-
             blueprint.set_attribute('role_name', 'autopilot')
 
-            # TODO: should be a function
-            traffic_manager_get_port = 8000
-
-            # spawn the cars and set their autopilot and light state all together
+            # Spawn the cars and set their autopilot and light state all together
             batch_vehicle.append(SpawnActor(blueprint, transform)
                                  .then(SetAutopilot(FutureActor, True, traffic_manager_get_port)))
 
@@ -86,11 +81,15 @@ class ActorManager:
         self.all_id_list += self.vehicles_id_list
 
         # Set automatic vehicle lights update if specified
-        car_lights_on = False
+        # car_lights_on = False
         # if car_lights_on:
         #    all_vehicle_actors = self.world.get_actors(self.vehicles_list)
         #    for actor in all_vehicle_actors:
         #        self.traffic_manager.update_vehicle_lights(actor, True)
+        if self.world.get_settings().synchronous_mode:
+            self.world.tick()
+        else:
+            self.world.wait_for_tick()
 
         logging.info(f'Spawned {len(self.vehicles_id_list)} vehicles.')
 
@@ -106,21 +105,22 @@ class ActorManager:
         #        logging.error("Error when spawning walkers.")
 
         self.walkers_id_list = walkers_list
-        self.all_id_list += walkers_list
+        self.all_id_list += self.walkers_id_list
+
         logging.info(f'Spawned {len(self.walkers_id_list)} walkers.')
 
         # Spawn the walker controller
-
         self.spawn_walker_controllers(self.walkers_id_list)
 
-        # 4. we put together the walkers and controllers id to get the objects from their id
+        # Put together the walkers and controllers id to get the objects from their id
         # for i in range(len(self.walkers_list)):
         #    self.all_id.append(self.walkers_list[i]["con"])
         #    self.all_id.append(self.walkers_list[i]["id"])
 
     def _spawn_batch_walkers(self, n_walker):
+        t1 = time.time()
         blueprints = [create_walker_bp(self.world) for _ in range(n_walker)]
-
+        logging.debug(f'Creating blueprints took {time.time() - t1}s')
         # 1. Take all the random locations to spawn
         walker_spawn_points = []
         for _ in range(n_walker):
@@ -213,7 +213,7 @@ class ActorManager:
         # Delete ego
         if self.ego is not None:
             if self.ego.is_alive:
-                #self.sensor_manager.close()
+                # self.sensor_manager.close()
 
                 if self.ego.destroy():
                     logging.info(f'Destroyed the ego vehicle.')
@@ -270,7 +270,6 @@ class ActorManager:
         else:
             logging.error(f"There were no walker to be destroyed.")
 
-
         if synchronous_mode:
             self.world.tick()
         else:
@@ -287,4 +286,3 @@ class ActorManager:
         logging.info(f"Actors have been destroyed.")
 
         # self.traffic_manager.global_percentage_speed_difference(30.0)
-

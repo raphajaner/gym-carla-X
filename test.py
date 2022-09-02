@@ -4,22 +4,28 @@
 #
 # This work is licensed under the terms of the MIT license.
 # For a copy, see <https://opensource.org/licenses/MIT>.
-import faulthandler; faulthandler.enable()
+import faulthandler;
+
+faulthandler.enable()
 
 import time
 import logging
-logging.basicConfig(format='%(asctime)s [%(levelname)s] \t %(message)s', level=logging.INFO, datefmt='%d-%b-%y %H:%M:%S')
+
+logging.basicConfig(format='%(asctime)s [%(levelname)s] \t %(message)s', level=logging.INFO,
+                    datefmt='%d-%b-%y %H:%M:%S')
 from datetime import timedelta
 import gym
 import gym_carla
+
+
 def main():
     # parameters for the gym_carla environment
     params = {
-        'number_of_vehicles': 0,
-        'number_of_walkers': 0,
-        'display_size': 196,  # screen size of bird-eye render
-        'max_past_step': 1,  # the number of past steps to draw
-        'dt': 0.05,  # time interval between two frames
+        'number_of_vehicles': 1,
+        'number_of_walkers': 1,
+        'display_size': 256,  # screen size of bird-eye render
+        'max_past_step': 2,  # the number of past steps to draw
+        'dt': 0.1,  # time interval between two frames
         'discrete': False,  # whether to use discrete control space
         'discrete_acc': [-3.0, 0.0, 3.0],  # discrete value of accelerations
         'discrete_steer': [-0.2, 0.0, 0.2],  # discrete value of steering angles
@@ -46,7 +52,10 @@ def main():
         'weather': 'ClearNoon',
         'pedestrian_cross_factor': 1,
         'ego_spawn_times': 10,
-        'sensors': ['RGBCamera', 'Lidar', 'CollisionSensor']
+        'sensors': ['RGBCamera', 'Lidar', 'CollisionSensor'],
+        'follow_cam_ego': True,
+        'display_rendering': True,
+        'carla_no_rendering': False
     }
     # Set gym-carla environment
     start_time = time.time()
@@ -54,10 +63,12 @@ def main():
     blueprint_library = env.world.get_blueprint_library()
     [print(bp.id) for bp in blueprint_library.filter('vehicle.*.*')]
     try:
+
         env.run(reset_time=30)
     finally:
-        logging.info(f'Env run for {str(timedelta(seconds=time.time()-start_time))}s.')
+        logging.info(f'Env run for {str(timedelta(seconds=time.time() - start_time))}s.')
         env.close()
+
 
 if __name__ == '__main__':
     try:
