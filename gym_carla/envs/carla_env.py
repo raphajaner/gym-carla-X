@@ -35,10 +35,13 @@ class CarlaEnv(gym.Env):
 
     def __init__(self, params):
         self.time_start = time.time()
-        self.carla_manager = CarlaManager(params)
-        self.carla_manager.setup_experiment()
-        # parameters
+
         self.params = params
+
+        self.carla_manager = CarlaManager(params)
+        self.carla_manager.set_synchronous_mode(self.params)
+
+        # parameters
         self.display_size = params['display_size']  # rendering screen size
         self.max_past_step = params['max_past_step']
         self.number_of_vehicles = params['number_of_vehicles']
@@ -90,7 +93,6 @@ class CarlaEnv(gym.Env):
             })
         self.observation_space = spaces.Dict(observation_space_dict)
 
-        self.carla_manager.set_synchronous_mode(self.params)
 
         #print(self.carla_manager.settings.synchronous_mode)
         # Record the time of total steps and resetting steps
@@ -130,9 +132,9 @@ class CarlaEnv(gym.Env):
 
         # Disable sync mode
         self.carla_manager.set_asynchronous_mode()
-        self.carla_manager.spawn_vehicle(50)
-        self.carla_manager.spawn_pedestrians(89)
-        self.ego = self.carla_manager.spawn_ego()
+        self.carla_manager.actor_manager.spawn_vehicles(5)
+        self.carla_manager.actor_manager.spawn_walkers(1000)
+        self.ego = self.carla_manager.actor_manager.spawn_ego(self.params)
         self.carla_manager.set_synchronous_mode(self.params)
 
         #self._init_renderer()
@@ -277,7 +279,7 @@ class CarlaEnv(gym.Env):
                 logging.info(f"Loop run for {str(timedelta(seconds=duration))}")
 
     def close(self):
-        self.carla_manager.clear_all_actors()
+        self.carla_manager.actor_manager.clear_all_actors()
         pygame.quit()
         settings = self.world.get_settings()
         #settings.synchronous_mode = False
