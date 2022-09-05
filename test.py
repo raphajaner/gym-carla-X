@@ -63,7 +63,6 @@ def main():
     blueprint_library = env.world.get_blueprint_library()
     [print(bp.id) for bp in blueprint_library.filter('vehicle.*.*')]
     try:
-
         env.run(reset_time=30)
     finally:
         logging.info(f'Env run for {str(timedelta(seconds=time.time() - start_time))}s.')

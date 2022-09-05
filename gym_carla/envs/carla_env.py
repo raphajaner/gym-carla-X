@@ -232,12 +232,12 @@ class CarlaEnv(gym.Env):
     def _get_actor_polygons(self, filt):
         """Get the bounding box polygon of actors.
 
-    Args:
-      filt: the filter indicating what type of actors we'll look at.
+        Args:
+          filt: the filter indicating what type of actors we'll look at.
 
-    Returns:
-      actor_poly_dict: a dictionary containing the bounding boxes of specific actors.
-    """
+        Returns:
+          actor_poly_dict: a dictionary containing the bounding boxes of specific actors.
+        """
         actor_poly_dict = {}
         for actor in self.world.get_actors().filter(filt):
             # Get x, y and yaw of the actor
